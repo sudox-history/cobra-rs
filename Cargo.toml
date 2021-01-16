@@ -1,0 +1,9 @@
+[package]
+name = "cobra-rs"
+version = "0.1.0"
+authors = ["undefined7887 <undefined7887@gmail.com>"]
+edition = "2018"
+
+[dependencies]
+sodiumoxide = "0.2.6"
+tokio = { version = "1.0.1", features = ["full"] }
