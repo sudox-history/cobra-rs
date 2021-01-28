@@ -36,10 +36,7 @@ pub struct WriteError<T>(pub T);
 ///             let data = pool2.read(PING_KIND).await;
 ///             match data {
 ///                 Some(data) => println!("Received PING frame {:?}", data),
-///                 None => {
-///                     println!("Pool closed");
-///                     break;
-///                 }
+///                 None => break println!("Pool closed"),
 ///             }
 ///         }
 ///     });
@@ -50,10 +47,7 @@ pub struct WriteError<T>(pub T);
 ///
 ///             match data {
 ///                 Some(data) => println!("Received HANDSHAKE frame {:?}", data),
-///                 None => {
-///                     println!("Pool closed");
-///                     break;
-///                 }
+///                 None => break println!("Pool closed"),
 ///             }
 ///         }
 ///     });
@@ -112,10 +106,7 @@ impl<K: Eq + Hash, V: Kind<K>> Pool<K, V> {
     }
 
     async fn read_value(&self, kind: &K) -> Option<V> {
-        match self.values.lock().await.map.get_mut(kind) {
-            Some(values) => values.pop_front(),
-            None => None
-        }
+        self.values.lock().await.map.get_mut(kind)?.pop_front()
     }
 
     /// Reads any value written to the pool

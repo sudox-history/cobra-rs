@@ -17,10 +17,7 @@ async fn main() {
 
             match data {
                 Some(data) => println!("Received PING frame {:?}", data),
-                None => {
-                    println!("Pool closed");
-                    break;
-                }
+                None => break println!("Pool closed"),
             }
         }
     });
@@ -31,10 +28,7 @@ async fn main() {
 
             match data {
                 Some(data) => println!("Received HANDSHAKE frame {:?}", data),
-                None => {
-                    println!("Pool closed");
-                    break;
-                }
+                None => break println!("Pool closed"),
             }
         }
     });
