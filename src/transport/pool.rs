@@ -166,7 +166,7 @@ impl<K: Eq + Hash, V: Kind<K>> Pool<K, V> {
             value_store.map
                 .entry(value.kind())
                 .or_insert_with(VecDeque::new)
-                .push_front(value);
+                .push_back(value);
         }
 
         self.semaphore.add_permits(1);
