@@ -12,12 +12,12 @@ async fn one_read_two_write() {
     const KIND_B: u8 = 1;
 
     tokio::spawn(async move {
-        let package = Frame::create(KIND_A, vec![0; 100000]);
+        let package = Frame::from_vec(KIND_A, vec![0; 100000]);
         write_pool_a.write(package).await;
     });
 
     tokio::spawn(async move {
-        let package = Frame::create(KIND_B, vec![1, 2, 3, 4, 5]);
+        let package = Frame::from_vec(KIND_B, vec![1, 2, 3, 4, 5]);
         write_pool_b.write(package).await;
     });
 
@@ -41,8 +41,8 @@ async fn two_read_one_write() {
     const KIND_B: u8 = 1;
 
     tokio::spawn(async move {
-        let package_a = Frame::create(KIND_A, vec![0; 100000]);
-        let package_b = Frame::create(KIND_B, vec![1, 2, 3, 4, 5]);
+        let package_a = Frame::from_vec(KIND_A, vec![0; 100000]);
+        let package_b = Frame::from_vec(KIND_B, vec![1, 2, 3, 4, 5]);
         write_pool.write(package_a).await;
         write_pool.write(package_b).await;
     });
@@ -68,12 +68,12 @@ async fn two_read_two_write() {
     const KIND_B: u8 = 1;
 
     tokio::spawn(async move {
-        let package_a = Frame::create(KIND_A, vec![0; 100000]);
+        let package_a = Frame::from_vec(KIND_A, vec![0; 100000]);
         write_pool_a.write(package_a).await;
     });
 
     tokio::spawn(async move {
-        let package_b = Frame::create(KIND_B, vec![1, 2, 3, 4, 5]);
+        let package_b = Frame::from_vec(KIND_B, vec![1, 2, 3, 4, 5]);
         write_pool_b.write(package_b).await;
     });
 
@@ -96,7 +96,7 @@ async fn stress_test() {
     for _ in 0..100000 {
         let write_pool = read_pool.clone();
         tokio::spawn(async move {
-            let package = Frame::create(KIND_A, vec![1, 2, 3]);
+            let package = Frame::from_vec(KIND_A, vec![1, 2, 3]);
             write_pool.write(package).await;
         });
     }
@@ -118,7 +118,7 @@ async fn write_err() {
     const KIND_A: u8 = 0;
 
     close_pool.close().await;
-    let package = Frame::create(KIND_A, vec![1, 2, 3]);
+    let package = Frame::from_vec(KIND_A, vec![1, 2, 3]);
     write_pool.write(package).await.unwrap();
 }
 
@@ -131,7 +131,7 @@ async fn err_after_write() {
     const KIND_A: u8 = 0;
 
     tokio::spawn(async move {
-        let package = Frame::create(KIND_A, vec![1, 2, 3]);
+        let package = Frame::from_vec(KIND_A, vec![1, 2, 3]);
         write_pool.write(package).await;
         write_pool.close().await;
     });
@@ -153,12 +153,12 @@ async fn read_any() {
     const KIND_B: u8 = 1;
 
     tokio::spawn(async move {
-        let package = Frame::create(KIND_A, vec![1, 2, 3]);
+        let package = Frame::from_vec(KIND_A, vec![1, 2, 3]);
         write_any_pool_a.write(package).await;
     });
 
     tokio::spawn(async move {
-        let package = Frame::create(KIND_B, vec![1, 2, 3]);
+        let package = Frame::from_vec(KIND_B, vec![1, 2, 3]);
         write_any_pool_b.write(package).await;
     });
 
@@ -183,14 +183,14 @@ async fn data_order() {
 
     tokio::spawn(async move {
         for i in 0..5 {
-            let package = Frame::create(KIND_A, vec![i]);
+            let package = Frame::from_vec(KIND_A, vec![i]);
             write_pool_a.write(package).await;
         }
     });
 
     tokio::spawn(async move {
         for i in 0..5 {
-            let package = Frame::create(KIND_B, vec![i]);
+            let package = Frame::from_vec(KIND_B, vec![i]);
             write_pool_b.write(package).await;
         }
     });

@@ -52,8 +52,8 @@ pub struct WriteError<T>(pub T);
 ///         }
 ///     });
 ///
-///     let ping_frame = Frame::create(PING_KIND, vec![]);
-///     let handshake_frame = Frame::create(HANDSHAKE_KIND, vec![1, 2, 3]);
+///     let ping_frame = Frame::from_vec(PING_KIND, vec![]);
+///     let handshake_frame = Frame::from_vec(HANDSHAKE_KIND, vec![1, 2, 3]);
 ///
 ///     pool.write(ping_frame).await.unwrap();
 ///     time::sleep(time::Duration::from_secs(4)).await;
