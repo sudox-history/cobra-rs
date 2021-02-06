@@ -4,7 +4,7 @@ use std::fmt::Debug;
 
 pub trait Chunk: DerefMut<Target=Vec<u8>> + Debug {
     fn header_len() -> usize;
-    fn with_capacity(capacity: usize) -> Self;
+    fn with_capacity_filled(capacity: usize) -> Self;
 }
 
 pub struct ConcatBuffer<T: Chunk> {
@@ -34,7 +34,7 @@ impl<T: Chunk> ConcatBuffer<T> {
         let partial_len = partial_chunk.len();
 
         if len <= partial_len + self.inner.len() {
-            partial_chunk.extend_from_slice(&self.inner[..len - partial_len]);
+            self.inner.copy_to_slice(&mut partial_chunk[partial_len..]);
             Some(partial_chunk)
         } else {
             self.partial_chunk = Some((len, partial_chunk));
@@ -44,15 +44,14 @@ impl<T: Chunk> ConcatBuffer<T> {
 
     fn try_read_full_chunk(&mut self) -> Option<T> {
         let len = self.try_read_header()?;
-        let mut chunk = T::with_capacity(len);
+        let mut chunk = T::with_capacity_filled(len);
 
         if len <= self.inner.len() {
-            chunk.extend_from_slice(&self.inner[..len]);
+            self.inner.copy_to_slice(&mut chunk);
             Some(chunk)
         } else {
-            chunk.extend_from_slice(&self.inner);
+            self.inner.copy_to_slice(&mut chunk);
             self.partial_chunk = Some((len, chunk));
-
             self.fragment();
             None
         }
