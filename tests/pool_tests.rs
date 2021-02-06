@@ -1,4 +1,3 @@
-#![allow(unused)]
 use cobra_rs::transport::pool::*;
 
 struct TestFrame {
@@ -151,7 +150,7 @@ async fn write_err() {
     close_pool.close().await;
     let package = TestFrame::create(KIND_A, 0);
     match write_pool.write(package).await {
-        Ok(_) => {},
+        Ok(_) => {}
         Err(_) => {
             panic!("Write err")
         }
@@ -233,12 +232,12 @@ async fn data_order() {
 
     for i in 0..5 {
         assert_eq!(read_pool.read(KIND_A)
-            .await
-            .unwrap()
-            .value, i);
+                       .await
+                       .unwrap()
+                       .value, i);
         assert_eq!(read_pool.read(KIND_B)
-            .await
-            .unwrap()
-            .value, i);
+                       .await
+                       .unwrap()
+                       .value, i);
     }
 }
