@@ -74,11 +74,7 @@ pub struct WriteError<T>(pub T);
 ///     let value_b = Value::create(KIND_B);
 ///
 ///     pool.write(value_a).await.unwrap();
-///     sleep(Duration::from_secs(4)).await;
-///
 ///     pool.write(value_b).await.unwrap();
-///     sleep(Duration::from_secs(4)).await;
-///
 ///     pool.close().await;
 ///     sleep(Duration::from_secs(1)).await;
 /// }
@@ -233,10 +229,7 @@ impl<K: Eq + Hash, V: Kind<K>> Default for KindStore<K, V> {
 ///
 ///             match data {
 ///                 Some(data) => println!("Received value {:?}", data),
-///                 None => {
-///                     println!("Pool closed");
-///                     break;
-///                 }
+///                 None => break println!("Pool closed"),
 ///             }
 ///         }
 ///     });
@@ -245,11 +238,7 @@ impl<K: Eq + Hash, V: Kind<K>> Default for KindStore<K, V> {
 ///     let value_b = Value::create(2);
 ///
 ///     pool.write(value_a).await.unwrap();
-///     sleep(Duration::from_secs(4)).await;
-///
 ///     pool.write(value_b).await.unwrap();
-///     sleep(Duration::from_secs(4)).await;
-///
 ///     pool.close().await;
 ///     sleep(Duration::from_secs(1)).await;
 /// }

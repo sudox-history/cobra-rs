@@ -19,7 +19,7 @@ async fn main() {
 
     tokio::spawn(async move {
         loop {
-            let data = pool2.read_any().await;
+            let data = pool2.read().await;
 
             match data {
                 Some(data) => println!("Received value {:?}", data),
