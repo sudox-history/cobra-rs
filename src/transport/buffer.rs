@@ -1,8 +1,7 @@
 use bytes::{BytesMut, Buf};
 use std::ops::{Deref, DerefMut};
-use std::fmt::Debug;
 
-pub trait Chunk: DerefMut<Target=Vec<u8>> + Debug {
+pub trait Chunk: DerefMut<Target=Vec<u8>> {
     fn header_len() -> usize;
     fn with_capacity_filled(capacity: usize) -> Self;
 }
@@ -31,10 +30,10 @@ impl<T: Chunk> ConcatBuffer<T> {
     }
 
     fn try_read_partial_chunk(&mut self, len: usize, mut partial_chunk: T) -> Option<T> {
-        let partial_len = partial_chunk.len();
+        let full_len = partial_chunk.len();
 
-        if len <= partial_len + self.inner.len() {
-            self.inner.copy_to_slice(&mut partial_chunk[partial_len..]);
+        if full_len <= len + self.inner.len() {
+            self.inner.copy_to_slice(&mut partial_chunk[len..]);
             Some(partial_chunk)
         } else {
             self.partial_chunk = Some((len, partial_chunk));
@@ -50,7 +49,8 @@ impl<T: Chunk> ConcatBuffer<T> {
             self.inner.copy_to_slice(&mut chunk);
             Some(chunk)
         } else {
-            self.inner.copy_to_slice(&mut chunk);
+            let len = self.inner.len();
+            self.inner.copy_to_slice(&mut chunk[..len]);
             self.partial_chunk = Some((len, chunk));
             self.fragment();
             None

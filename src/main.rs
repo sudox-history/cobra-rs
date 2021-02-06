@@ -1,22 +1,45 @@
-use cobra_rs::transport::buffer::{ConcatBuffer, Chunk};
-use bytes::{Buf, BufMut, BytesMut};
-use tokio::net::{TcpStream, TcpListener};
-use std::io::Read;
-use std::ops::{DerefMut, Deref};
+use cobra_rs::transport::pool::PoolAny;
+use tokio::time::{sleep, Duration};
 
+#[derive(Debug)]
+struct Value {
+    a: i32
+}
+
+impl Value {
+    fn create(a: i32) -> Self {
+        Value { a }
+    }
+}
 
 #[tokio::main]
 async fn main() {
-    let mut bytes = BytesMut::with_capacity(4);
-    bytes.put_u8(123);
-    bytes.put_u8(123);
-    bytes.put_u8(123);
-    bytes.get_u8();
+    let pool = PoolAny::new();
+    let pool2 = pool.clone();
 
-    // 00 00 00 00 | 00 00 00 12 | 00 00 00
-    //bytes.copy_within(4..8, 0);
+    tokio::spawn(async move {
+        loop {
+            let data = pool2.read_any().await;
 
-    // ATTENTION!!!: Moving bytes to start (capacity-len, capacity]
-    bytes.reserve(bytes.capacity() - bytes.len() + 1);
-    println!("{:?}", bytes.capacity());
+            match data {
+                Some(data) => println!("Received value {:?}", data),
+                None => {
+                    println!("Pool closed");
+                    break;
+                }
+            }
+        }
+    });
+
+    let value_a = Value::create(1);
+    let value_b = Value::create(2);
+
+    pool.write(value_a).await.unwrap();
+    sleep(Duration::from_secs(4)).await;
+
+    pool.write(value_b).await.unwrap();
+    sleep(Duration::from_secs(4)).await;
+
+    pool.close().await;
+    sleep(Duration::from_secs(1)).await;
 }
