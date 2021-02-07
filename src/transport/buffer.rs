@@ -21,38 +21,38 @@ impl<T: Chunk> ConcatBuffer<T> {
 
     pub fn try_read_chunk(&mut self) -> Option<T> {
         match self.partial_chunk.take() {
-            Some((len, partial_chunk)) =>
-                self.try_read_partial_chunk(len, partial_chunk),
+            Some((body_len, chunk)) =>
+                self.try_read_partial_chunk(body_len, chunk),
 
             None =>
                 self.try_read_full_chunk(),
         }
     }
 
-    fn try_read_partial_chunk(&mut self, len: usize, mut partial_chunk: T) -> Option<T> {
-        let full_len = partial_chunk.len();
-
-        if full_len <= len + self.inner.len() {
-            self.inner.copy_to_slice(&mut partial_chunk[len..]);
-            Some(partial_chunk)
+    fn try_read_partial_chunk(&mut self, body_len: usize, mut chunk: T) -> Option<T> {
+        if chunk.len() <= body_len + self.inner.len() {
+            self.inner.copy_to_slice(&mut chunk[body_len..]);
+            Some(chunk)
         } else {
-            self.partial_chunk = Some((len, partial_chunk));
+            self.partial_chunk = Some((body_len, chunk));
             None
         }
     }
 
     fn try_read_full_chunk(&mut self) -> Option<T> {
-        let len = self.try_read_header()?;
-        let mut chunk = T::with_capacity_filled(len);
+        let body_len = self.try_read_header()?;
+        let mut chunk = T::with_capacity_filled(body_len);
 
-        if len <= self.inner.len() {
+        if body_len <= self.inner.len() {
             self.inner.copy_to_slice(&mut chunk);
             Some(chunk)
         } else {
-            let len = self.inner.len();
-            self.inner.copy_to_slice(&mut chunk[..len]);
-            self.partial_chunk = Some((len, chunk));
+            let partial_body_len = self.inner.len();
+
+            self.inner.copy_to_slice(&mut chunk[..partial_body_len]);
             self.fragment();
+
+            self.partial_chunk = Some((partial_body_len, chunk));
             None
         }
     }

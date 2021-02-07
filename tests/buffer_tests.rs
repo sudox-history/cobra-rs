@@ -1,6 +1,6 @@
 use cobra_rs::transport::buffer::*;
 use std::ops::{Deref, DerefMut};
-use bytes::{BufMut, BytesMut};
+use bytes::BufMut;
 
 #[derive(Debug)]
 struct TestChunk {
