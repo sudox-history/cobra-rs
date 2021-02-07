@@ -1,55 +1,44 @@
-use bytes::{Buf, BufMut};
-
 use crate::transport::pool::Kind;
-use crate::transport::constants::{
-    FRAME_LEN_BYTES, FRAME_KIND_BYTES, FRAME_HEADER_BYTES
-};
+use crate::transport::buffer::Chunk;
+use std::ops::{Deref, DerefMut};
+
+const LEN_BYTES: usize = 2;
+const KIND_BYTES: usize = 1;
+const HEADER_BYTES: usize = LEN_BYTES + KIND_BYTES;
 
 #[derive(Debug, Default)]
 pub struct Frame {
-    kind: u8,
-    pub data: Vec<u8>,
-}
-
-impl Frame {
-    pub fn from_vec(kind: u8, data: Vec<u8>) -> Self {
-        Frame {
-            kind,
-            data
-        }
-    }
-
-    pub fn from_slice(kind: u8, data: &[u8]) -> Self {
-        Frame {
-            kind,
-            data: data.to_vec(),
-        }
-    }
-
-    pub fn to_vec(&self) -> Vec<u8> {
-        let mut vec = Vec::with_capacity(self.len());
-
-        // Frame header
-        vec.put_uint(self.len() as u64, FRAME_LEN_BYTES);
-        vec.put_uint(self.kind  as u64, FRAME_KIND_BYTES);
-        
-        // Frame data
-        vec.copy_from_slice(&self.data);
-        
-        vec
-    }
-
-    fn len(&self) -> usize {
-        FRAME_LEN_BYTES + FRAME_KIND_BYTES + self.data.len()
-    }
+    data: Vec<u8>,
 }
 
 impl Kind<u8> for Frame {
     fn kind(&self) -> u8 {
-        self.kind
+        self.data[0]
     }
 }
 
-//...[start_pointer...end_pointer)...
-// frame::Buff
+impl Chunk for Frame {
+    fn header_len() -> usize {
+        HEADER_BYTES
+    }
 
+    fn with_capacity_filled(capacity: usize) -> Self {
+        Frame {
+            data: vec![0; capacity],
+        }
+    }
+}
+
+impl Deref for Frame {
+    type Target = Vec<u8>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.data
+    }
+}
+
+impl DerefMut for Frame {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.data
+    }
+}
