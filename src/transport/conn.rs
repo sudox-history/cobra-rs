@@ -1,10 +1,11 @@
-use tokio::net::TcpStream;
+use tokio::net::{TcpStream, ToSocketAddrs};
 use std::io;
 use std::sync::Arc;
 
 use crate::transport::pool::{PoolAny, Pool, WriteError};
 use crate::transport::buffer::ConcatBuffer;
 use crate::transport::frame::Frame;
+use tokio::sync::Notify;
 
 pub struct Conn {
     write_pool: PoolAny<Frame>,
@@ -12,26 +13,52 @@ pub struct Conn {
 }
 
 impl Conn {
-    pub async fn connect(addr: &str) -> io::Result<Self> {
-        let read_tcp_stream = Arc::new(TcpStream::connect(addr).await?);
+    pub(crate) async fn from_raw(tcp_stream: TcpStream,
+                                 close_notifier: Option<Arc<Notify>>) -> Self {
+        let read_tcp_stream = Arc::new(tcp_stream);
         let write_tcp_stream = read_tcp_stream.clone();
 
-        let self_read_pool = Pool::new();
-        let read_pool  = self_read_pool.clone();
+        let read_pool = Pool::new();
 
-        let self_write_pool : PoolAny<Frame> = PoolAny::new();
-        let write_pool = self_write_pool.clone();
+        let write_pool = PoolAny::new();
 
         let buffer = ConcatBuffer::default();
 
-        tokio::spawn(Conn::read_loop(read_tcp_stream, read_pool, buffer));
+        if let Some(close_notifier) = close_notifier {
+            tokio::spawn(Conn::close_task(
+                close_notifier,
+                read_pool.clone()
+            ));
+        }
 
-        tokio::spawn(Conn::write_loop(write_tcp_stream, write_pool));
+        tokio::spawn(Conn::read_loop(
+            read_tcp_stream,
+            read_pool.clone(),
+            buffer
+        ));
 
-        Ok(Conn {
-            write_pool: self_write_pool,
-            read_pool: self_read_pool,
-        })
+        tokio::spawn(Conn::write_loop(
+            write_tcp_stream,
+            write_pool.clone()
+        ));
+
+        Conn {
+            write_pool,
+            read_pool,
+        }
+    }
+
+    pub async fn connect<T: ToSocketAddrs>(addr: T) -> io::Result<Self> {
+        Ok(
+            Conn::from_raw(TcpStream::connect(addr).await?, None)
+                .await
+        )
+    }
+
+    async fn close_task(close_notifier: Arc<Notify>, read_pool: Pool<u8, Frame>) {
+        // TODO memory leak if conn will clos by user. async Pool::closed() needed
+        close_notifier.notified().await;
+        read_pool.close().await;
     }
 
     async fn read_loop(read_tcp_stream: Arc<TcpStream>,
@@ -66,7 +93,7 @@ impl Conn {
             }
 
             match write_tcp_stream.try_write(&frame) {
-                Ok(_) => break,
+                Ok(_) => {}
                 Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => continue,
                 Err(_) => break
             }
