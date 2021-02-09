@@ -1,20 +1,19 @@
 use crate::transport::conn::Conn;
-use crate::transport::pool::PoolAny;
+use crate::transport::pool::Pool;
 use tokio::net::{ToSocketAddrs, TcpListener};
 use std::io;
 use std::sync::Arc;
 use tokio::sync::Notify;
 
 pub struct Listener {
-    connections_pool: PoolAny<Conn>,
-    tcp_listener: Arc<TcpListener>,
+    connections_pool: Pool<Conn>,
     close_notifier: Arc<Notify>,
 }
 
 impl Listener {
     pub async fn listen<T: ToSocketAddrs>(addr: T) -> io::Result<Self> {
         let tcp_listener = Arc::new(TcpListener::bind(addr).await?);
-        let connections_pool = PoolAny::new();
+        let connections_pool = Pool::new();
         let close_notifier = Arc::new(Notify::new());
 
         tokio::spawn(Listener::accept_loop(
@@ -24,14 +23,13 @@ impl Listener {
         ));
 
         Ok(Listener {
-            tcp_listener,
             connections_pool,
             close_notifier
         })
     }
 
     async fn accept_loop(tcp_listener: Arc<TcpListener>,
-                         connections_pool: PoolAny<Conn>,
+                         connections_pool: Pool<Conn>,
                          close_notifier: Arc<Notify>) {
         while let Ok((socket, _)) = tcp_listener.accept().await {
             let conn = Conn::from_raw(socket,
@@ -40,11 +38,14 @@ impl Listener {
                 break
             }
         }
-        connections_pool.close().await;
+        connections_pool.close();
     }
 
     pub async fn accept(&self) -> Option<Conn> {
-        self.connections_pool.read().await
+        Some(self.connections_pool
+            .read()
+            .await?
+            .accept())
     }
 
     async fn close_all_connections(&self) {

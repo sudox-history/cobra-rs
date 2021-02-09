@@ -1,341 +1,234 @@
+use tokio::sync::{Semaphore, RwLock, Mutex};
 use std::sync::Arc;
+use tokio::sync::oneshot;
+use oneshot::Sender;
+use std::ops::{Deref, DerefMut};
 use std::hash::Hash;
-use std::collections::{VecDeque, HashMap};
-use tokio::sync::{Semaphore, Mutex};
+use std::collections::HashMap;
+
+pub enum WriteError<V> {
+    Denied(V),
+    Closed(V),
+}
+
+struct PoolState<V> {
+    read_semaphore: Semaphore,
+    write_semaphore: Semaphore,
+    value: RwLock<Option<(V, Sender<Result<(), V>>)>>,
+}
+
+impl<V> PoolState<V> {
+    fn new() -> Self {
+        PoolState {
+            read_semaphore: Semaphore::new(0),
+            write_semaphore: Semaphore::new(1),
+            value: RwLock::new(None),
+        }
+    }
+}
+
+pub struct Pool<V> {
+    state: Arc<PoolState<V>>,
+}
+
+impl<V> Pool<V> {
+    pub fn new() -> Self {
+        Default::default()
+    }
+
+    pub async fn write(&self, value: V) -> Result<(), WriteError<V>> {
+        match self.state.write_semaphore.acquire().await {
+            Ok(permit) => {
+                permit.forget();
+                self.state.read_semaphore.add_permits(1);
+
+                let (sender, receiver) = oneshot::channel();
+                *self.state.value.write().await = Some((value, sender));
+
+                if let Ok(res) = receiver.await {
+                    match res {
+                        Ok(_) => Ok(()),
+                        Err(value) => Err(WriteError::Denied(value))
+                    }
+                }
+                else {
+                    panic!("Sender was dropped")
+                }
+            }
+
+            Err(_) => Err(WriteError::Closed(value))
+        }
+    }
+
+    pub async fn read(&self) -> Option<PoolOutput<V>> {
+        match self.state.read_semaphore.acquire().await {
+            Ok(permit) => {
+                permit.forget();
+                self.state.write_semaphore.add_permits(1);
+
+                match self.state.value.write().await.take() {
+                    Some((value, sender)) => {
+                        Some(PoolOutput::new(value, sender))
+                    }
+                    None => {
+                        panic!("Read value is empty")
+                    }
+                }
+            }
+
+            Err(_) => None
+        }
+    }
+
+    pub fn clone(&self) -> Self {
+        Pool {
+            state: self.state.clone()
+        }
+    }
+
+    pub fn close(&self) {
+        self.state.read_semaphore.close();
+        self.state.write_semaphore.close();
+    }
+}
+
+impl<V> Clone for Pool<V> {
+    fn clone(&self) -> Self {
+        Pool {
+            state: self.state.clone()
+        }
+    }
+}
+
+impl<V> Default for Pool<V> {
+    fn default() -> Self {
+        Pool {
+            state: Arc::new(PoolState::new())
+        }
+    }
+}
+
+pub struct PoolOutput<V> {
+    value: Option<V>,
+    sender: Option<Sender<Result<(), V>>>,
+}
+
+impl<V> PoolOutput<V> {
+    fn new(value: V, sender: Sender<Result<(), V>>) -> Self {
+        PoolOutput {
+            value: Some(value),
+            sender: Some(sender),
+        }
+    }
+
+    pub fn accept(&mut self) -> V {
+        if self.value.is_none() {
+            panic!("Double response error")
+        }
+
+        if self.sender
+            .take()
+            .unwrap()
+            .send(Ok(())).is_err() {
+            panic!("Receiver was dropped")
+        }
+
+        self.value.take().unwrap()
+    }
+
+    pub fn deny(&mut self) {
+        if self.value.is_none() {
+            panic!("Double response error")
+        }
+
+        if self.sender
+            .take()
+            .unwrap()
+            .send(Err(self.value.take().unwrap()))
+            .is_err() {
+            panic!("Receiver was dropped")
+        }
+    }
+}
+
+impl<V> Drop for PoolOutput<V> {
+    fn drop(&mut self) {
+        if self.value.is_some() {
+            panic!("PoolOutput was dropped without response")
+        }
+    }
+}
+
+impl<V> Deref for PoolOutput<V> {
+    type Target = V;
+
+    fn deref(&self) -> &Self::Target {
+        match &self.value {
+            Some(value) => value,
+            None => {
+                panic!("Value already taken from PoolOutput")
+            }
+        }
+    }
+}
+
+impl<V> DerefMut for PoolOutput<V> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        match &mut self.value {
+            Some(value) => value,
+            None => {
+                panic!("Value already taken from PoolOutput")
+            }
+        }
+    }
+}
 
 pub trait Kind<T> {
     fn kind(&self) -> T;
 }
 
-/// The error returned on write to a closed pool
-#[derive(Debug)]
-pub struct WriteError<T>(pub T);
-
-/// Asynchronous value pool
-///
-/// Can be used to exchange various kinds of data between asynchronous tasks
-///
-/// # Example
-/// In this example, we are listening to different kinds of data from multiple tasks.
-///
-/// ```
-/// use cobra_rs::transport::pool::Pool;
-/// use cobra_rs::transport::pool::Kind;
-/// use tokio::time::{sleep, Duration};
-///
-/// #[derive(Debug)]
-/// struct Value {
-///     kind: u8
-/// }
-///
-/// impl Value {
-///     fn create(kind: u8) -> Self {
-///         Value { kind }
-///     }
-/// }
-///
-/// impl Kind<u8> for Value {
-///     fn kind(&self) -> u8 {
-///         self.kind
-///     }
-/// }
-///
-/// const KIND_A: u8 = 1;
-/// const KIND_B: u8 = 2;
-///
-/// #[tokio::main]
-/// async fn main() {
-///     let pool = Pool::new();
-///     let pool2 = pool.clone();
-///     let pool3 = pool.clone();
-///
-///     tokio::spawn(async move {
-///         loop {
-///             let data = pool2.read(KIND_A).await;
-///             match data {
-///                 Some(data) => println!("Received KIND_A value {:?}", data),
-///                 None => break println!("Pool closed"),
-///             }
-///         }
-///     });
-///
-///     tokio::spawn(async move {
-///         loop {
-///             let data = pool3.read(KIND_B).await;
-///
-///             match data {
-///                 Some(data) => println!("Received KIND_B value {:?}", data),
-///                 None => break println!("Pool closed"),
-///             }
-///         }
-///     });
-///
-///     let value_a = Value::create(KIND_A);
-///     let value_b = Value::create(KIND_B);
-///
-///     pool.write(value_a).await.unwrap();
-///     pool.write(value_b).await.unwrap();
-///     pool.close().await;
-///     sleep(Duration::from_secs(1)).await;
-/// }
-/// ```
-pub struct Pool<K: Eq + Hash, V: Kind<K>> {
-    semaphore: Arc<Semaphore>,
-    values: Arc<Mutex<KindStore<K, V>>>,
+pub struct KindPool<K: Eq + Hash, V: Kind<K>> {
+    pools: Arc<Mutex<HashMap<K, Pool<V>>>>
 }
 
-impl<K: Eq + Hash, V: Kind<K>> Pool<K, V> {
-    /// Creates new pool
+impl<K: Eq + Hash, V: Kind<K>> KindPool<K, V> {
     pub fn new() -> Self {
-        Default::default()
-    }
-
-    /// Reads value with specific kind from pool
-    ///
-    /// Returns [None] if the pool was closed
-    ///
-    /// # Note
-    ///
-    /// Do not read one kind of data from several tasks,
-    /// this will lead to the selection of a random receiver
-    ///
-    /// [None]: std::option::Option
-    pub async fn read(&self, kind: K) -> Option<V> {
-        if let Some(value) = self.read_value(&kind).await {
-            return Some(value);
-        }
-
-        loop {
-            match self.semaphore.acquire().await {
-                Ok(permit) => {
-                    permit.forget();
-
-                    let value = self.read_value(&kind).await;
-                    if value.is_some() {
-                        break value;
-                    }
-                }
-
-                // Pool is closed
-                Err(_) => break None,
-            }
+        KindPool {
+            pools: Arc::new(Mutex::new(HashMap::new()))
         }
     }
 
-    async fn read_value(&self, kind: &K) -> Option<V> {
-        self.values.lock().await.map.get_mut(kind)?.pop_front()
-    }
-
-    /// Writes value to the pool
-    ///
-    /// Returns [WriteError] if the pool was closed
-    ///
-    /// [WriteError]: crate::transport::pool::WriteError
     pub async fn write(&self, value: V) -> Result<(), WriteError<V>> {
-        {
-            let mut value_store = self.values.lock().await;
-
-            // If the pool was closed, we need to return the membership
-            if !value_store.can_write {
-                return Err(WriteError(value));
-            }
-
-            // Creating linked list if not exists and inserting frame
-            value_store.map
-                .entry(value.kind())
-                .or_insert_with(VecDeque::new)
-                .push_back(value);
-        }
-
-        self.semaphore.add_permits(1);
-        Ok(())
+       self.pools
+           .lock()
+           .await
+           .entry(value.kind())
+           .or_insert_with(Pool::new)
+           .write(value)
+           .await
     }
 
-    /// Closes the pool
+    pub async fn read(&self, kind: K) -> Option<PoolOutput<V>> {
+        self.pools
+            .lock()
+            .await
+            .get_mut(&kind)?
+            .read()
+            .await
+    }
+
+
     pub async fn close(&self) {
-        self.semaphore.close();
-        self.values.lock().await.can_write = false;
+        for (_, pool) in self.pools.lock().await.iter() {
+            pool.close();
+        }
     }
 }
 
-impl<K: Eq + Hash, V: Kind<K>> Clone for Pool<K, V> {
+impl<K: Eq + Hash, V: Kind<K>> Clone for KindPool<K, V> {
     fn clone(&self) -> Self {
-        Pool {
-            semaphore: self.semaphore.clone(),
-            values: self.values.clone(),
-        }
-    }
-}
-
-impl<K: Eq + Hash, V: Kind<K>> Default for Pool<K, V> {
-    fn default() -> Self {
-        Pool {
-            semaphore: Arc::new(Semaphore::new(0)),
-            values: Arc::new(Mutex::new(KindStore::new())),
-        }
-    }
-}
-
-struct KindStore<K: Eq + Hash, V: Kind<K>> {
-    map: HashMap<K, VecDeque<V>>,
-    can_write: bool,
-}
-
-impl<K: Eq + Hash, V: Kind<K>> KindStore<K, V> {
-    fn new() -> Self {
-        Default::default()
-    }
-}
-
-impl<K: Eq + Hash, V: Kind<K>> Default for KindStore<K, V> {
-    fn default() -> Self {
-        KindStore {
-            map: HashMap::new(),
-            can_write: true,
-        }
-    }
-}
-
-/// Asynchronous value pool without division into types
-///
-/// Same as [Pool], but does not separate values into different types
-///
-/// # Example
-/// In this example, we are listening data from another task.
-///
-/// ```
-/// use cobra_rs::transport::pool::PoolAny;
-/// use tokio::time::{sleep, Duration};
-///
-/// #[derive(Debug)]
-/// struct Value {
-///     a: i32
-/// }
-///
-/// impl Value {
-///     fn create(a: i32) -> Self {
-///         Value { a }
-///     }
-/// }
-///
-/// #[tokio::main]
-/// async fn main() {
-///     let pool = PoolAny::new();
-///     let pool2 = pool.clone();
-///
-///     tokio::spawn(async move {
-///         loop {
-///             let data = pool2.read().await;
-///
-///             match data {
-///                 Some(data) => println!("Received value {:?}", data),
-///                 None => break println!("Pool closed"),
-///             }
-///         }
-///     });
-///
-///     let value_a = Value::create(1);
-///     let value_b = Value::create(2);
-///
-///     pool.write(value_a).await.unwrap();
-///     pool.write(value_b).await.unwrap();
-///     pool.close().await;
-///     sleep(Duration::from_secs(1)).await;
-/// }
-/// ```
-///
-/// [Pool]: crate::transport::pool::Pool
-pub struct PoolAny<V> {
-    semaphore: Arc<Semaphore>,
-    values: Arc<Mutex<AnyStore<V>>>,
-}
-
-impl<V> PoolAny<V> {
-    /// Creates new pool
-    pub fn new() -> Self {
-        Default::default()
-    }
-
-    /// Reads value written to the pool
-    ///
-    /// Returns [None] if the pool was closed
-    ///
-    /// [None]: sts::option::Option
-    pub async fn read(&self) -> Option<V> {
-        match self.semaphore.acquire().await {
-            Ok(permit) => {
-                permit.forget();
-
-                // Always Some()
-                self.values.lock().await.deque.pop_front()
-            }
-
-            // Pool is closed
-            Err(_) => None,
-        }
-    }
-
-    /// Writes value to the pool
-    ///
-    /// Returns [WriteError] if the pool was closed
-    ///
-    /// [WriteError]: crate::transport::pool::WriteError
-    pub async fn write(&self, value: V) -> Result<(), WriteError<V>> {
-        {
-            let mut value_store = self.values.lock().await;
-
-            // If the pool was closed, we need to return the membership
-            if !value_store.can_write {
-                return Err(WriteError(value));
-            }
-
-            value_store.deque.push_back(value);
-        }
-        self.semaphore.add_permits(1);
-        Ok(())
-    }
-
-    /// Closes the pool
-    pub async fn close(&self) {
-        self.semaphore.close();
-        self.values.lock().await.can_write = false;
-    }
-}
-
-impl<V> Clone for PoolAny<V> {
-    fn clone(&self) -> Self {
-        PoolAny {
-            semaphore: self.semaphore.clone(),
-            values: self.values.clone(),
-        }
-    }
-}
-
-impl<V> Default for PoolAny<V> {
-    fn default() -> Self {
-        PoolAny {
-            semaphore: Arc::new(Semaphore::new(0)),
-            values: Arc::new(Mutex::new(AnyStore::new())),
-        }
-    }
-}
-
-struct AnyStore<V> {
-    deque: VecDeque<V>,
-    can_write: bool,
-}
-
-impl<V> AnyStore<V> {
-    fn new() -> Self {
-        Default::default()
-    }
-}
-
-impl<V> Default for AnyStore<V> {
-    fn default() -> Self {
-        AnyStore {
-            deque: VecDeque::new(),
-            can_write: true,
+        KindPool {
+            pools: self.pools.clone()
         }
     }
 }

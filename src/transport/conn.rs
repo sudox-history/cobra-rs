@@ -2,14 +2,14 @@ use tokio::net::{TcpStream, ToSocketAddrs};
 use std::io;
 use std::sync::Arc;
 
-use crate::transport::pool::{PoolAny, Pool, WriteError};
+use crate::transport::pool::{Pool, KindPool, WriteError};
 use crate::transport::buffer::ConcatBuffer;
 use crate::transport::frame::Frame;
 use tokio::sync::Notify;
 
 pub struct Conn {
-    write_pool: PoolAny<Frame>,
-    read_pool: Pool<u8, Frame>,
+    write_pool: Pool<Frame>,
+    read_pool: KindPool<u8, Frame>,
     conn_close_notifier: Arc<Notify>,
 }
 
@@ -19,8 +19,8 @@ impl Conn {
         let read_tcp_stream = Arc::new(tcp_stream);
         let write_tcp_stream = read_tcp_stream.clone();
 
-        let read_pool = Pool::new();
-        let write_pool = PoolAny::new();
+        let read_pool = KindPool::new();
+        let write_pool = Pool::new();
 
         let buffer = ConcatBuffer::default();
 
@@ -60,8 +60,8 @@ impl Conn {
 
     async fn close_task(server_close_notifier: Option<Arc<Notify>>,
                         conn_close_notifier: Arc::<Notify>,
-                        read_pool: Pool<u8, Frame>,
-                        write_pool: PoolAny<Frame>) {
+                        read_pool: KindPool<u8, Frame>,
+                        write_pool: Pool<Frame>) {
         match server_close_notifier {
             Some(server_close_notifier) => {
                 tokio::select! {
@@ -74,11 +74,11 @@ impl Conn {
             }
         }
         read_pool.close().await;
-        write_pool.close().await;
+        write_pool.close();
     }
 
     async fn read_loop(read_tcp_stream: Arc<TcpStream>,
-                       read_pool: Pool<u8, Frame>,
+                       read_pool: KindPool<u8, Frame>,
                        mut buffer: ConcatBuffer<Frame>) {
         loop {
             if read_tcp_stream.readable().await.is_err() {
@@ -102,9 +102,9 @@ impl Conn {
     }
 
     async fn write_loop(write_tcp_stream: Arc<TcpStream>,
-                        write_pool: PoolAny<Frame>) {
-        while let Some(frame) = write_pool.read().await {
-            let mut frame = frame.to_vec();
+                        write_pool: Pool<Frame>) {
+        while let Some(mut frame) = write_pool.read().await {
+            let mut frame = frame.accept().to_vec();
 
             while !frame.is_empty() {
                 if write_tcp_stream.writable().await.is_err() {
@@ -120,12 +120,15 @@ impl Conn {
                 }
             }
         }
-        write_pool.close().await;
+        write_pool.close();
     }
 
     // Return None if connection close
     pub async fn read(&self, kind: u8) -> Option<Frame> {
-        self.read_pool.read(kind).await
+        Some(self.read_pool
+            .read(kind)
+            .await?
+            .accept())
     }
 
     // Return WriteError<F> if connection close
