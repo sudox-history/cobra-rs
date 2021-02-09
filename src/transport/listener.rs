@@ -5,7 +5,7 @@ use std::io;
 use std::sync::Arc;
 use tokio::sync::Notify;
 
-struct Listener {
+pub struct Listener {
     connections_pool: PoolAny<Conn>,
     tcp_listener: Arc<TcpListener>,
     close_notifier: Arc<Notify>,
@@ -41,6 +41,10 @@ impl Listener {
             }
         }
         connections_pool.close().await;
+    }
+
+    pub async fn accept(&self) -> Option<Conn> {
+        self.connections_pool.read().await
     }
 
     async fn close_all_connections(&self) {
