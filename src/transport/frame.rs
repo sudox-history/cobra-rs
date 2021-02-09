@@ -1,6 +1,7 @@
 use crate::transport::pool::Kind;
 use crate::transport::buffer::Chunk;
 use std::ops::{Deref, DerefMut};
+use bytes::BufMut;
 
 const LEN_BYTES: usize = 2;
 const KIND_BYTES: usize = 1;
@@ -9,6 +10,23 @@ const HEADER_BYTES: usize = LEN_BYTES + KIND_BYTES;
 #[derive(Debug, Default)]
 pub struct Frame {
     data: Vec<u8>,
+}
+
+impl Frame {
+    pub fn new<T: Deref<Target=[u8]>>(kind: u8, body: T) -> Self {
+        let size = Frame::header_len() + KIND_BYTES + body.len();
+        let mut data = Vec::with_capacity(size);
+        data.put_uint(body.len() as u64, Frame::header_len());
+        data.put_uint(kind as u64, KIND_BYTES);
+        data.put_slice(&body);
+        Frame {
+            data
+        }
+    }
+
+    pub fn get_data(mut self) -> Vec<u8> {
+        self.data.split_off(Frame::header_len() + KIND_BYTES)
+    }
 }
 
 impl Kind<u8> for Frame {
