@@ -104,8 +104,6 @@ impl Conn {
     async fn write_loop(write_tcp_stream: Arc<TcpStream>,
                         write_pool: Pool<Frame>) {
         while let Some(mut frame) = write_pool.read().await {
-            let mut frame = frame.accept().to_vec();
-
             while !frame.is_empty() {
                 if write_tcp_stream.writable().await.is_err() {
                     break;
@@ -113,11 +111,12 @@ impl Conn {
 
                 match write_tcp_stream.try_write(&frame) {
                     Ok(n) => {
-                        frame = frame.split_off(n);
+                        **frame = frame.split_off(n);
                     },
                     Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => continue,
                     Err(_) => break
                 }
+                frame.accept();
             }
         }
         write_pool.close();
