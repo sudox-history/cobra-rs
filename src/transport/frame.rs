@@ -27,6 +27,10 @@ impl Frame {
     pub fn get_data(mut self) -> Vec<u8> {
         self.data.split_off(Frame::header_len() + KIND_BYTES)
     }
+
+    pub(crate) fn to_vec(self) -> Vec<u8> {
+        self.data
+    }
 }
 
 impl Kind<u8> for Frame {
