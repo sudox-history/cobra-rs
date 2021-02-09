@@ -9,27 +9,29 @@ use tokio::sync::Notify;
 
 pub struct Conn {
     write_pool: PoolAny<Frame>,
-    read_pool: Pool<u8, Frame>
+    read_pool: Pool<u8, Frame>,
+    conn_close_notifier: Arc<Notify>,
 }
 
 impl Conn {
     pub(crate) async fn from_raw(tcp_stream: TcpStream,
-                                 close_notifier: Option<Arc<Notify>>) -> Self {
+                                 server_close_notifier: Option<Arc<Notify>>) -> Self {
         let read_tcp_stream = Arc::new(tcp_stream);
         let write_tcp_stream = read_tcp_stream.clone();
 
         let read_pool = Pool::new();
-
         let write_pool = PoolAny::new();
 
         let buffer = ConcatBuffer::default();
 
-        if let Some(close_notifier) = close_notifier {
-            tokio::spawn(Conn::close_task(
-                close_notifier,
-                read_pool.clone()
-            ));
-        }
+        let conn_close_notifier = Arc::new(Notify::new());
+
+        tokio::spawn(Conn::close_task(
+            server_close_notifier,
+            conn_close_notifier.clone(),
+            read_pool.clone(),
+            write_pool.clone()
+        ));
 
         tokio::spawn(Conn::read_loop(
             read_tcp_stream,
@@ -45,6 +47,7 @@ impl Conn {
         Conn {
             write_pool,
             read_pool,
+            conn_close_notifier,
         }
     }
 
@@ -55,10 +58,23 @@ impl Conn {
         )
     }
 
-    async fn close_task(close_notifier: Arc<Notify>, read_pool: Pool<u8, Frame>) {
-        // TODO memory leak if conn will clos by user. async Pool::closed() needed
-        close_notifier.notified().await;
+    async fn close_task(server_close_notifier: Option<Arc<Notify>>,
+                        conn_close_notifier: Arc::<Notify>,
+                        read_pool: Pool<u8, Frame>,
+                        write_pool: PoolAny<Frame>) {
+        match server_close_notifier {
+            Some(server_close_notifier) => {
+                tokio::select! {
+                    _ = server_close_notifier.notified() => {}
+                    _ = conn_close_notifier.notified() => {}
+                }
+            }
+            None => {
+                conn_close_notifier.notified().await;
+            }
+        }
         read_pool.close().await;
+        write_pool.close().await;
     }
 
     async fn read_loop(read_tcp_stream: Arc<TcpStream>,
@@ -110,9 +126,10 @@ impl Conn {
     pub async fn write(&self, frame: Frame) -> Result<(), WriteError<Frame>> {
         self.write_pool.write(frame).await
     }
+}
 
-    pub async fn close(&self) {
-        self.write_pool.close().await;
-        self.read_pool.close().await;
+impl Drop for Conn {
+    fn drop(&mut self) {
+        self.conn_close_notifier.notify_one();
     }
 }
