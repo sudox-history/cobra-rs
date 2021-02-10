@@ -1,7 +1,7 @@
-use crate::transport::pool::Kind;
 use crate::transport::buffer::Chunk;
 use std::ops::{Deref, DerefMut};
 use bytes::BufMut;
+use crate::transport::kind_pool::Kind;
 
 const LEN_BYTES: usize = 2;
 const KIND_BYTES: usize = 1;
@@ -26,10 +26,6 @@ impl Frame {
 
     pub fn get_data(mut self) -> Vec<u8> {
         self.data.split_off(Frame::header_len() + KIND_BYTES)
-    }
-
-    pub(crate) fn to_vec(self) -> Vec<u8> {
-        self.data
     }
 }
 

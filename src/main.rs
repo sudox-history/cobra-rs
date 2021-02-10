@@ -1,5 +1,6 @@
-use cobra_rs::transport::pool::PoolAny;
+use cobra_rs::transport::pool::{Pool, PoolOutput};
 use tokio::time::{sleep, Duration};
+use cobra_rs::transport::kind_pool::{KindPool, Kind};
 
 #[derive(Debug)]
 struct Value {
@@ -12,34 +13,48 @@ impl Value {
     }
 }
 
+#[derive(Debug)]
+struct TestFrame {
+    key: u8,
+    value: i32,
+}
+
+impl TestFrame {
+    fn create(key: u8, value: i32) -> Self {
+        TestFrame {
+            key,
+            value,
+        }
+    }
+}
+
+impl Kind<u8> for TestFrame {
+    fn kind(&self) -> u8 {
+        self.key
+    }
+}
+
 #[tokio::main]
 async fn main() {
-    let pool = PoolAny::new();
-    let pool2 = pool.clone();
+    let read_pool = KindPool::new();
 
-    tokio::spawn(async move {
-        loop {
-            let data = pool2.read().await;
+    const MAX: i32 = 32;
 
-            match data {
-                Some(data) => println!("Received value {:?}", data),
-                None => {
-                    println!("Pool closed");
-                    break;
-                }
-            }
-        }
-    });
+    for i in 0..MAX {
+        let write_pool = read_pool.clone();
+        tokio::spawn(async move {
+            let package = TestFrame::create(0, 1);
+            if write_pool.write(package).await.is_err() {
+                panic!("Write return error")
+            };
+        });
+    }
 
-    let value_a = Value::create(1);
-    let value_b = Value::create(2);
+    for i in 0..MAX {
+        assert_eq!(read_pool.read(0)
+                       .await
+                       .unwrap()
+                       .value, 1);
+    }
 
-    pool.write(value_a).await.unwrap();
-    sleep(Duration::from_secs(4)).await;
-
-    pool.write(value_b).await.unwrap();
-    sleep(Duration::from_secs(4)).await;
-
-    pool.close().await;
-    sleep(Duration::from_secs(1)).await;
 }

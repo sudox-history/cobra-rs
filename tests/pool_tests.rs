@@ -1,4 +1,5 @@
 use cobra_rs::transport::pool::*;
+use cobra_rs::transport::kind_pool::{Kind, KindPool};
 
 #[derive(Debug)]
 struct TestFrame {
@@ -20,10 +21,41 @@ impl Kind<u8> for TestFrame {
         self.key
     }
 }
+//
+// #[tokio::test]
+// async fn one_read_two_write() {
+//     let read_pool = Pool::new();
+//     let write_pool_a = read_pool.clone();
+//     let write_pool_b = read_pool.clone();
+//
+//     tokio::spawn(async move {
+//         let frame = TestFrame::create(0, 1);
+//         if write_pool_a.write(frame).await.is_err() {
+//             panic!("Write was not successful")
+//         }
+//     });
+//
+//     tokio::spawn(async move {
+//         let frame = TestFrame::create(0, 1);
+//         if write_pool_b.write(frame).await.is_err() {
+//             panic!("Write was not successful")
+//         }
+//     });
+//
+//     assert_eq!(read_pool.read()
+//                    .await
+//                    .unwrap()
+//                    .value, 1);
+//     assert_eq!(read_pool.read()
+//                    .await
+//                    .unwrap()
+//                    .value, 1);
+// }
+//
 
 #[tokio::test]
 async fn one_read_two_write() {
-    let read_pool = Pool::new();
+    let read_pool = KindPool::new();
     let write_pool_a = read_pool.clone();
     let write_pool_b = read_pool.clone();
 
@@ -33,15 +65,15 @@ async fn one_read_two_write() {
     tokio::spawn(async move {
         let package_a = TestFrame::create(KIND_A, 0);
         let package_b = TestFrame::create(KIND_A, 1);
-        write_pool_a.write(package_a).await.unwrap();
-        write_pool_a.write(package_b).await.unwrap();
+        write_pool_a.write(package_a).await;
+        write_pool_a.write(package_b).await;
     });
 
     tokio::spawn(async move {
         let package_a = TestFrame::create(KIND_B, 2);
         let package_b = TestFrame::create(KIND_B, 3);
-        write_pool_b.write(package_a).await.unwrap();
-        write_pool_b.write(package_b).await.unwrap();
+        write_pool_b.write(package_a).await;
+        write_pool_b.write(package_b).await;
     });
 
     assert_eq!(read_pool.read(KIND_A)
@@ -64,7 +96,7 @@ async fn one_read_two_write() {
 
 #[tokio::test]
 async fn two_read_one_write() {
-    let read_pool_a = Pool::new();
+    let read_pool_a = KindPool::new();
     let read_pool_b = read_pool_a.clone();
     let write_pool = read_pool_a.clone();
 
@@ -74,8 +106,8 @@ async fn two_read_one_write() {
     tokio::spawn(async move {
         let package_a = TestFrame::create(KIND_A, 0);
         let package_b = TestFrame::create(KIND_B, 1);
-        write_pool.write(package_a).await.unwrap();
-        write_pool.write(package_b).await.unwrap();
+        write_pool.write(package_a).await;
+        write_pool.write(package_b).await;
     });
 
     assert_eq!(read_pool_a.read(KIND_A)
@@ -90,7 +122,7 @@ async fn two_read_one_write() {
 
 #[tokio::test]
 async fn two_read_two_write() {
-    let read_pool_a = Pool::new();
+    let read_pool_a = KindPool::new();
     let read_pool_b = read_pool_a.clone();
     let write_pool_a = read_pool_a.clone();
     let write_pool_b = read_pool_b.clone();
@@ -100,12 +132,12 @@ async fn two_read_two_write() {
 
     tokio::spawn(async move {
         let package_a = TestFrame::create(KIND_A, 0);
-        write_pool_a.write(package_a).await.unwrap();
+        write_pool_a.write(package_a).await;
     });
 
     tokio::spawn(async move {
         let package_b = TestFrame::create(KIND_B, 1);
-        write_pool_b.write(package_b).await.unwrap();
+        write_pool_b.write(package_b).await;
     });
 
     assert_eq!(read_pool_a.read(KIND_A)
@@ -120,20 +152,22 @@ async fn two_read_two_write() {
 
 #[tokio::test]
 async fn stress_test() {
-    let read_pool = Pool::new();
+    let read_pool = KindPool::new();
 
-    const KIND_A: u8 = 0;
+    const MAX: i32 = 32;
 
-    for i in 0..100000 {
+    for i in 0..MAX {
         let write_pool = read_pool.clone();
         tokio::spawn(async move {
-            let package = TestFrame::create(KIND_A, i);
-            write_pool.write(package).await.unwrap();
+            let package = TestFrame::create(0, i);
+            if write_pool.write(package).await.is_err() {
+                panic!("Write return error")
+            };
         });
     }
 
-    for i in 0..100000 {
-        assert_eq!(read_pool.read(KIND_A)
+    for i in 0..MAX {
+        assert_eq!(read_pool.read(0)
                        .await
                        .unwrap()
                        .value, i);
@@ -143,7 +177,7 @@ async fn stress_test() {
 #[tokio::test]
 #[should_panic]
 async fn write_err() {
-    let close_pool: Pool<u8, TestFrame> = Pool::new();
+    let close_pool: KindPool<u8, TestFrame> = KindPool::new();
     let write_pool = close_pool.clone();
 
     const KIND_A: u8 = 0;
@@ -161,14 +195,14 @@ async fn write_err() {
 #[tokio::test]
 #[should_panic]
 async fn err_after_write() {
-    let read_pool = Pool::new();
+    let read_pool = KindPool::new();
     let write_pool = read_pool.clone();
 
     const KIND_A: u8 = 0;
 
     tokio::spawn(async move {
         let package = TestFrame::create(KIND_A, 0);
-        write_pool.write(package).await.unwrap();
+        write_pool.write(package).await;
         write_pool.close().await;
     });
 
@@ -181,7 +215,7 @@ async fn err_after_write() {
 
 #[tokio::test]
 async fn read_any() {
-    let read_any_pool = PoolAny::new();
+    let read_any_pool = Pool::new();
     let write_any_pool_a = read_any_pool.clone();
     let write_any_pool_b = read_any_pool.clone();
 
@@ -190,12 +224,12 @@ async fn read_any() {
 
     tokio::spawn(async move {
         let package = TestFrame::create(KIND_A, 0);
-        write_any_pool_a.write(package).await.unwrap();
+        write_any_pool_a.write(package).await;
     });
 
     tokio::spawn(async move {
         let package = TestFrame::create(KIND_B, 0);
-        write_any_pool_b.write(package).await.unwrap();
+        write_any_pool_b.write(package).await;
     });
 
     assert_eq!(read_any_pool.read()
@@ -210,7 +244,7 @@ async fn read_any() {
 
 #[tokio::test]
 async fn data_order() {
-    let read_pool = Pool::new();
+    let read_pool = KindPool::new();
     let write_pool_a = read_pool.clone();
     let write_pool_b = read_pool.clone();
 
@@ -220,14 +254,14 @@ async fn data_order() {
     tokio::spawn(async move {
         for i in 0..5 {
             let package = TestFrame::create(KIND_A, i);
-            write_pool_a.write(package).await.unwrap();
+            write_pool_a.write(package).await;
         }
     });
 
     tokio::spawn(async move {
         for i in 0..5 {
             let package = TestFrame::create(KIND_B, i);
-            write_pool_b.write(package).await.unwrap();
+            write_pool_b.write(package).await;
         }
     });
 
