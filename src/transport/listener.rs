@@ -48,7 +48,7 @@ impl Listener {
             .accept())
     }
 
-    async fn close_all_connections(&self) {
+    pub async fn close_all_connections(&self) {
         self.close_notifier.notify_waiters();
     }
 }

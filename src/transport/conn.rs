@@ -119,7 +119,7 @@ impl Conn {
                 }
             }
             if !frame.is_empty() {
-                frame.deny();
+                frame.deny().await;
             }
         }
         write_pool.close();

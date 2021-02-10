@@ -1,90 +1,73 @@
+use std::collections::HashMap;
 use std::hash::Hash;
 use std::sync::Arc;
+
 use tokio::sync::RwLock;
-use std::collections::HashMap;
-use crate::transport::pool::{Pool, WriteError, PoolOutput};
+
+use crate::transport::pool::{Pool, PoolOutput, WriteError};
 
 pub trait Kind<T> {
     fn kind(&self) -> T;
 }
 
-pub struct KindPool<K: Eq + Hash + Clone, V: Kind<K>> {
-    pools: Arc<RwLock<HashMap<K, Pool<V>>>>
+pub struct KindPool<K: Eq + Hash, V: Kind<K>> {
+    pools: Arc<RwLock<HashMap<K, Pool<V>>>>,
+    closed: Arc<RwLock<bool>>,
 }
 
-impl<K: Eq + Hash + Clone, V: Kind<K>> KindPool<K, V> {
+impl<K: Eq + Hash, V: Kind<K>> KindPool<K, V> {
     pub fn new() -> Self {
         Default::default()
     }
 
     pub async fn write(&self, value: V) -> Result<(), WriteError<V>> {
-        println!("Write 1");
-        let pool = match self.pools.read().await.get(&value.kind()) {
-            Some(pool) => {
-                println!("Write 2");
-                pool.clone()
-            },
-            None => {
-                println!("Write 3");
-                let x = self.pools
-                    .write()
-                    .await
-                    .insert(value.kind(), Pool::new())
-                    .unwrap();
-                println!("Write 3.5");
-                x
-            }
-        };
-        println!("Write 4");
-        let x = pool.write(value).await;
-        println!("Write 5");
-        x
+        if *self.closed.read().await {
+            return Err(WriteError::Closed(value));
+        }
+        let pool = self.pools
+            .write()
+            .await
+            .entry(value.kind())
+            .or_insert_with(Pool::new)
+            .clone();
+        pool.write(value).await
     }
 
     pub async fn read(&self, kind: K) -> Option<PoolOutput<V>> {
-        println!("Read 1");
-        let pool = match self.pools.read().await.get(&kind) {
-            Some(pool) => {
-                println!("Read 2");
-                pool.clone()
-            },
-            None => {
-                println!("Read 3");
-                let x = self.pools
-                    .write()
-                    .await
-                    .insert(kind, Pool::new())
-                    .unwrap();
-                println!("Read 3.5");
-                x
-            }
-        };
-        println!("Read 4");
-        let x = pool.read().await;
-        println!("Read 5");
-        x
+        if *self.closed.read().await {
+            return None;
+        }
+        let pool = self.pools
+            .write()
+            .await
+            .entry(kind)
+            .or_insert_with(Pool::new)
+            .clone();
+        pool.read().await
     }
 
-
     pub async fn close(&self) {
+        *self.closed.write().await = true;
         for (_, pool) in self.pools.read().await.iter() {
             pool.close();
         }
     }
 }
 
-impl<K: Eq + Hash + Clone, V: Kind<K>> Default for KindPool<K, V> {
+impl<K: Eq + Hash, V: Kind<K>> Default for KindPool<K, V> {
     fn default() -> Self {
         KindPool {
-            pools: Arc::new(RwLock::new(HashMap::new()))
+            pools: Arc::new(RwLock::new(HashMap::new())),
+            closed: Arc::new(RwLock::new(false)),
         }
     }
 }
 
-impl<K: Eq + Hash + Clone, V: Kind<K>> Clone for KindPool<K, V> {
+impl<K: Eq + Hash, V: Kind<K>> Clone for KindPool<K, V> {
     fn clone(&self) -> Self {
         KindPool {
-            pools: self.pools.clone()
+            pools: self.pools.clone(),
+            closed: self.closed.clone(),
         }
     }
 }

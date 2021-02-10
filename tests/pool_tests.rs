@@ -79,18 +79,22 @@ async fn one_read_two_write() {
     assert_eq!(read_pool.read(KIND_A)
                    .await
                    .unwrap()
+                   .accept()
                    .value, 0);
     assert_eq!(read_pool.read(KIND_A)
                    .await
                    .unwrap()
+                   .accept()
                    .value, 1);
     assert_eq!(read_pool.read(KIND_B)
                    .await
                    .unwrap()
+                   .accept()
                    .value, 2);
     assert_eq!(read_pool.read(KIND_B)
                    .await
                    .unwrap()
+                   .accept()
                    .value, 3);
 }
 
@@ -113,10 +117,12 @@ async fn two_read_one_write() {
     assert_eq!(read_pool_a.read(KIND_A)
                    .await
                    .unwrap()
+                   .accept()
                    .value, 0);
     assert_eq!(read_pool_b.read(KIND_B)
                    .await
                    .unwrap()
+                   .accept()
                    .value, 1);
 }
 
@@ -154,9 +160,7 @@ async fn two_read_two_write() {
 async fn stress_test() {
     let read_pool = KindPool::new();
 
-    const MAX: i32 = 32;
-
-    for i in 0..MAX {
+    for i in 0..100000 {
         let write_pool = read_pool.clone();
         tokio::spawn(async move {
             let package = TestFrame::create(0, i);
@@ -166,16 +170,16 @@ async fn stress_test() {
         });
     }
 
-    for i in 0..MAX {
+    for i in 0..100000 {
         assert_eq!(read_pool.read(0)
                        .await
                        .unwrap()
+                       .accept()
                        .value, i);
     }
 }
 
 #[tokio::test]
-#[should_panic]
 async fn write_err() {
     let close_pool: KindPool<u8, TestFrame> = KindPool::new();
     let write_pool = close_pool.clone();
@@ -184,16 +188,10 @@ async fn write_err() {
 
     close_pool.close().await;
     let package = TestFrame::create(KIND_A, 0);
-    match write_pool.write(package).await {
-        Ok(_) => {}
-        Err(_) => {
-            panic!("Write err")
-        }
-    }
+    assert!(write_pool.write(package).await.is_err())
 }
 
 #[tokio::test]
-#[should_panic]
 async fn err_after_write() {
     let read_pool = KindPool::new();
     let write_pool = read_pool.clone();
@@ -209,8 +207,9 @@ async fn err_after_write() {
     assert_eq!(read_pool.read(KIND_A)
                    .await
                    .unwrap()
+                   .accept()
                    .value, 0);
-    read_pool.read(KIND_A).await.unwrap();
+    assert!(read_pool.read(KIND_A).await.is_none());
 }
 
 #[tokio::test]
@@ -235,10 +234,12 @@ async fn read_any() {
     assert_eq!(read_any_pool.read()
                    .await
                    .unwrap()
+                   .accept()
                    .value, 0);
     assert_eq!(read_any_pool.read()
                    .await
                    .unwrap()
+                   .accept()
                    .value, 0);
 }
 
@@ -269,10 +270,12 @@ async fn data_order() {
         assert_eq!(read_pool.read(KIND_A)
                        .await
                        .unwrap()
+                       .accept()
                        .value, i);
         assert_eq!(read_pool.read(KIND_B)
                        .await
                        .unwrap()
+                       .accept()
                        .value, i);
     }
 }

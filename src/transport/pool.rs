@@ -1,33 +1,15 @@
 use std::ops::{Deref, DerefMut};
 use std::sync::Arc;
 
-use oneshot::Sender;
 use tokio::sync::{RwLock, Semaphore};
-use tokio::sync::oneshot;
 
 pub enum WriteError<V> {
     Denied(V),
     Closed(V),
 }
 
-struct PoolState<V> {
-    read_semaphore: Semaphore,
-    write_semaphore: Semaphore,
-    value: RwLock<Option<V>>,
-}
-
-impl<V> PoolState<V> {
-    fn new() -> Self {
-        PoolState {
-            read_semaphore: Semaphore::new(0),
-            write_semaphore: Semaphore::new(1),
-            value: RwLock::new(None),
-        }
-    }
-}
-
 pub struct Pool<V> {
-    state: Arc<PoolState<V>>,
+    state: Arc<PoolState<V>>
 }
 
 impl<V> Pool<V> {
@@ -40,51 +22,50 @@ impl<V> Pool<V> {
             Ok(permit) => {
                 permit.forget();
 
-                let (sender, receiver) = oneshot::channel();
-                *self.state.value.write().await = Some((value, sender));
-
+                *self.state.value.write().await = Some(value);
                 self.state.read_semaphore.add_permits(1);
 
-                if let Ok(res) = receiver.await {
-                    match res {
-                        Ok(_) => Ok(()),
-                        Err(value) => Err(WriteError::Denied(value))
+                let x = self.state.accept_semaphore.acquire().await;
+                if let Ok(permit) = x {
+                    permit.forget();
+                } else {
+                    return Err(WriteError::Closed(self.state
+                        .value
+                        .write()
+                        .await
+                        .take()
+                        .unwrap()));
+                }
+
+                match self.state.value.write().await.take() {
+                    None => {
+                        self.state.write_semaphore.add_permits(1);
+                        Ok(())
+                    }
+                    Some(value) => {
+                        self.state.write_semaphore.add_permits(1);
+                        Err(WriteError::Denied(value))
                     }
                 }
-                // Frame was dropped without accept/deny
-                else {
-                    Ok(())
-                }
             }
-
             Err(_) => Err(WriteError::Closed(value))
         }
     }
 
     pub async fn read(&self) -> Option<PoolOutput<V>> {
-        match self.state.read_semaphore.acquire().await {
-            Ok(permit) => {
-                permit.forget();
-
-                let out = match self.state.value.write().await.take() {
-                    Some((value, sender)) => {
-                        Some(PoolOutput::new(value, sender))
-                    }
-                    None => {
-                        panic!("Read value is empty")
-                    }
-                };
-                self.state.write_semaphore.add_permits(1);
-                out
-            }
-
-            Err(_) => None
-        }
+        self.state.read_semaphore
+            .acquire()
+            .await
+            .ok()?
+            .forget();
+        let value = self.state.value.write().await.take().unwrap();
+        Some(PoolOutput::new(value, self.state.clone()))
     }
 
     pub fn close(&self) {
         self.state.read_semaphore.close();
         self.state.write_semaphore.close();
+        self.state.accept_semaphore.close();
     }
 }
 
@@ -104,33 +85,51 @@ impl<V> Default for Pool<V> {
     }
 }
 
+struct PoolState<V> {
+    write_semaphore: Semaphore,
+    read_semaphore: Semaphore,
+    accept_semaphore: Semaphore,
+    value: RwLock<Option<V>>,
+}
+
+impl<V> PoolState<V> {
+    fn new() -> Self {
+        Default::default()
+    }
+}
+
+impl<V> Default for PoolState<V> {
+    fn default() -> Self {
+        PoolState {
+            write_semaphore: Semaphore::new(1),
+            read_semaphore: Semaphore::new(0),
+            accept_semaphore: Semaphore::new(0),
+            value: RwLock::new(None),
+        }
+    }
+}
+
 pub struct PoolOutput<V> {
     value: V,
-    sender: Sender<Result<(), V>>,
+    state: Arc<PoolState<V>>,
 }
 
 impl<V> PoolOutput<V> {
-    fn new(value: V, sender: Sender<Result<(), V>>) -> Self {
+    fn new(value: V, state: Arc<PoolState<V>>) -> Self {
         PoolOutput {
             value,
-            sender,
+            state,
         }
     }
 
     pub fn accept(self) -> V {
-        if self.sender.send(Ok(())).is_err() {
-            panic!("Receiver was dropped")
-        }
-
+        self.state.accept_semaphore.add_permits(1);
         self.value
     }
 
-    pub fn deny(self) {
-        if self.sender
-            .send(Err(self.value))
-            .is_err() {
-            panic!("Receiver was dropped")
-        }
+    pub async fn deny(self) {
+        *self.state.value.write().await = Some(self.value);
+        self.state.accept_semaphore.add_permits(1);
     }
 }
 
