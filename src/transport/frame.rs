@@ -16,7 +16,7 @@ impl Frame {
     pub fn new<T: Deref<Target=[u8]>>(kind: u8, body: T) -> Self {
         let size = Frame::header_len() + KIND_BYTES + body.len();
         let mut data = Vec::with_capacity(size);
-        data.put_uint(body.len() as u64, Frame::header_len());
+        data.put_uint((body.len() + KIND_BYTES) as u64, LEN_BYTES);
         data.put_uint(kind as u64, KIND_BYTES);
         data.put_slice(&body);
         Frame {
@@ -24,8 +24,9 @@ impl Frame {
         }
     }
 
-    pub fn get_data(mut self) -> Vec<u8> {
-        self.data.split_off(Frame::header_len() + KIND_BYTES)
+    pub fn get_data(self) -> Vec<u8> {
+        // TODO maybe excess move or copy
+        self.data[KIND_BYTES..].to_vec()
     }
 }
 
@@ -37,7 +38,7 @@ impl Kind<u8> for Frame {
 
 impl Chunk for Frame {
     fn header_len() -> usize {
-        HEADER_BYTES
+        LEN_BYTES
     }
 
     fn with_capacity_filled(capacity: usize) -> Self {
