@@ -67,12 +67,8 @@ struct PoolState<T> {
 ///
 /// [`read`]: crate::transport::sync::Pool::read
 pub struct PoolGuard<T> {
-    state: PoolGuardState<T>,
-}
-
-pub struct PoolGuardState<T> {
     value: Option<T>,
-    pool_state: Option<Arc<PoolState<T>>>,
+    state: Option<Arc<PoolState<T>>>,
 }
 
 impl<T> Pool<T> {
@@ -174,9 +170,10 @@ impl<T> PoolState<T> {
 }
 
 impl<T> PoolGuard<T> {
-    fn new(value: T, pool_state: Arc<PoolState<T>>) -> Self {
+    fn new(value: T, state: Arc<PoolState<T>>) -> Self {
         PoolGuard {
-            state: PoolGuardState::new(value, pool_state)
+            value: Some(value),
+            state: Some(state),
         }
     }
 
@@ -186,11 +183,9 @@ impl<T> PoolGuard<T> {
     ///
     /// [`Ok`]: std::result::Result::Ok
     pub fn accept(mut self) -> T {
-        self.state
-            .take_pool_state()
+        self.take_pool_state()
             .accept_value();
-        self.state
-            .take_value()
+        self.take_value()
     }
 
     /// Rejects value from the pool
@@ -199,31 +194,17 @@ impl<T> PoolGuard<T> {
     ///
     /// [`WriteError::Rejected`]: crate::transport::sync::WriteError
     pub async fn reject(mut self) {
-        self.state
-            .take_pool_state()
-            .reject_value(self.state.take_value())
+        self.take_pool_state()
+            .reject_value(self.take_value())
             .await;
-    }
-}
-
-impl<T> PoolGuardState<T> {
-    fn new(value: T, pool_state: Arc<PoolState<T>>) -> Self {
-        PoolGuardState {
-            value: Some(value),
-            pool_state: Some(pool_state),
-        }
-    }
-
-    fn take_value(&mut self) -> T {
-        self.value
-            .take()
-            .unwrap()
     }
 
     fn take_pool_state(&mut self) -> Arc<PoolState<T>> {
-        self.pool_state
-            .take()
-            .unwrap()
+         self.state.take().unwrap()
+    }
+
+    fn take_value(&mut self) -> T {
+        self.value.take().unwrap()
     }
 }
 
@@ -247,19 +228,19 @@ impl<T> Deref for PoolGuard<T> {
     type Target = T;
 
     fn deref(&self) -> &Self::Target {
-        self.state.value.as_ref().unwrap()
+        self.value.as_ref().unwrap()
     }
 }
 
 impl<T> DerefMut for PoolGuard<T> {
     fn deref_mut(&mut self) -> &mut Self::Target {
-        self.state.value.as_mut().unwrap()
+        self.value.as_mut().unwrap()
     }
 }
 
-impl<T> Drop for PoolGuardState<T> {
+impl<T> Drop for PoolGuard<T> {
     fn drop(&mut self) {
-        if let Some(pool_state) = self.pool_state.take() {
+        if let Some(pool_state) = self.state.take() {
             pool_state.accept_value();
         }
     }
