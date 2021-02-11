@@ -6,6 +6,7 @@ use crate::transport::sync::{Pool, KindPool, WriteError};
 use crate::transport::buffer::ConcatBuffer;
 use crate::transport::frame::Frame;
 use tokio::sync::Notify;
+use std::ops::DerefMut;
 
 pub struct Conn {
     write_pool: Pool<Frame>,
@@ -84,8 +85,7 @@ impl Conn {
             if read_tcp_stream.readable().await.is_err() {
                 break;
             }
-
-            match read_tcp_stream.try_read(&mut buffer) {
+            match read_tcp_stream.try_read_buf(buffer.deref_mut()) {
                 Ok(0) => break,
                 Ok(_) => {}
                 Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => continue,
@@ -108,7 +108,6 @@ impl Conn {
                 if write_tcp_stream.writable().await.is_err() {
                     break;
                 }
-
                 match write_tcp_stream.try_write(&frame) {
                     Ok(n) => {
                         **frame = frame.split_off(n);

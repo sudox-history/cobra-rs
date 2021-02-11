@@ -5,7 +5,6 @@ use crate::transport::sync::Kind;
 
 const LEN_BYTES: usize = 2;
 const KIND_BYTES: usize = 1;
-const HEADER_BYTES: usize = LEN_BYTES + KIND_BYTES;
 
 #[derive(Debug, Default)]
 pub struct Frame {
