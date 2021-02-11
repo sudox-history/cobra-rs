@@ -1,7 +1,7 @@
 use crate::transport::buffer::Chunk;
 use std::ops::{Deref, DerefMut};
 use bytes::BufMut;
-use crate::transport::kind_pool::Kind;
+use crate::transport::sync::Kind;
 
 const LEN_BYTES: usize = 2;
 const KIND_BYTES: usize = 1;

@@ -2,11 +2,10 @@ use tokio::net::{TcpStream, ToSocketAddrs};
 use std::io;
 use std::sync::Arc;
 
-use crate::transport::pool::{Pool, WriteError};
+use crate::transport::sync::{Pool, KindPool, WriteError};
 use crate::transport::buffer::ConcatBuffer;
 use crate::transport::frame::Frame;
 use tokio::sync::Notify;
-use crate::transport::kind_pool::KindPool;
 
 pub struct Conn {
     write_pool: Pool<Frame>,
@@ -119,7 +118,7 @@ impl Conn {
                 }
             }
             if !frame.is_empty() {
-                frame.deny().await;
+                frame.reject().await;
             }
         }
         write_pool.close();

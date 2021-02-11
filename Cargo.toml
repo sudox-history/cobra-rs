@@ -5,6 +5,5 @@ authors = ["undefined7887 <undefined7887@gmail.com>"]
 edition = "2018"
 
 [dependencies]
-sodiumoxide = "0.2.6"
 bytes = "1.0.1"
 tokio = { version = "1.1.0", features = ["full"] }

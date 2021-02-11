@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use tokio::sync::RwLock;
 
-use crate::transport::pool::{Pool, PoolOutput, WriteError};
+use crate::transport::sync::{Pool, PoolGuard, WriteError};
 
 pub trait Kind<T> {
     fn kind(&self) -> T;
@@ -33,7 +33,7 @@ impl<K: Eq + Hash, V: Kind<K>> KindPool<K, V> {
         pool.write(value).await
     }
 
-    pub async fn read(&self, kind: K) -> Option<PoolOutput<V>> {
+    pub async fn read(&self, kind: K) -> Option<PoolGuard<V>> {
         if *self.closed.read().await {
             return None;
         }
