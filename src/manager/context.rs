@@ -1,34 +1,63 @@
-use tokio::sync::RwLock;
-use crate::transport::sync::WriteError;
-use crate::manager::wrapper::Handler;
+use crate::manager::wrapper::{Middleware, Beginner};
 use std::sync::Arc;
+use tokio::sync::RwLock;
+use crate::transport::sync::{Kind, WriteError};
 
-pub struct Context<H: Handler> {
-    handler: Arc<H>,
-    kind_counter: RwLock<u8>,
+pub struct Context<M: ?Sized> {
+    pub middleware: Arc<dyn Middleware>,
+    pub kind_counter: Arc<RwLock<u8>>,
 }
 
-impl<'a, H: Handler> Context<H> {
-    pub(crate) async fn get_handler_conn(&self) -> HandlerConn<H> {
-        unimplemented!()
+impl<M: Beginner> Context<M> {
+    pub fn new(beginner: M) -> Self {
+        Context {
+            middleware: Arc::new(beginner),
+            kind_counter: Arc::new(RwLock::new(0)),
+        }
     }
 }
 
-pub(crate) struct HandlerConn<H: Handler> {
-    handler: Arc<H>,
+impl<M: Middleware> Context<M> {
+    pub async fn get_kind_conn(&self) -> KindConn<M> {
+        *self.kind_counter.write().await += 1;
+        let kind = *self.kind_counter.read().await - 1;
+        KindConn::new(kind, self.clone())
+    }
+}
+
+impl<M: Middleware> Clone for Context<M> {
+    fn clone(&self) -> Self {
+        Context {
+            middleware: self.middleware.clone(),
+            kind_counter: self.kind_counter.clone(),
+        }
+    }
+}
+
+pub struct KindConn<M: Middleware> {
     kind: u8,
+    context: Context<M>,
 }
 
-impl<H: Handler> HandlerConn<H> {
-    fn new(kind: u8) -> Self {
+impl<M: Middleware> KindConn<M> {
+    fn new(kind: u8 , context: Context<M>) -> Self {
+        KindConn {
+            kind,
+            context,
+        }
+    }
+
+    pub fn read(&self) -> Option<M::After> {
         unimplemented!()
     }
 
-    pub(crate) async fn read(&self) -> Option<H::After> {
+    pub fn write(&self, package: M::After) -> Result<(), WriteError<M::After>> {
         unimplemented!()
     }
+}
 
-    pub(crate) async fn write(&self, package: H::After) -> Result<(), WriteError<H::After>> {
-        unimplemented!()
+impl<M: Middleware> Kind<u8> for KindConn<M> {
+    fn kind(&self) -> u8 {
+        self.kind
     }
 }
