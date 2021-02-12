@@ -6,7 +6,7 @@ use tokio::sync::RwLock;
 
 use crate::transport::sync::{Pool, PoolGuard, WriteError};
 
-pub trait Kind<T> {
+pub trait Kind<T: Eq + Hash> {
     fn kind(&self) -> T;
 }
 
