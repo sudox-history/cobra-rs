@@ -24,6 +24,7 @@ impl Frame {
     }
 
     pub fn get_data(self) -> Vec<u8> {
+
         // TODO maybe excess move or copy
         self.data[KIND_BYTES..].to_vec()
     }
