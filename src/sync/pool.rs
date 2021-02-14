@@ -21,8 +21,8 @@ pub enum WriteError<T> {
 ///
 /// # Example
 ///
-/// ```no_run
-/// use cobra_rs::transport::sync::{Pool};
+/// ```
+/// use cobra_rs::sync::{Pool};
 ///
 /// #[tokio::main]
 /// async fn main() {

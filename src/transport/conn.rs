@@ -2,7 +2,7 @@ use tokio::net::{TcpStream, ToSocketAddrs};
 use std::io;
 use std::sync::Arc;
 
-use crate::transport::sync::{Pool, KindPool, WriteError};
+use crate::sync::{Pool, KindPool, WriteError};
 use crate::transport::buffer::ConcatBuffer;
 use crate::transport::frame::Frame;
 use tokio::sync::Notify;

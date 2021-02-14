@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use tokio::sync::RwLock;
 
-use crate::transport::sync::{Pool, PoolGuard, WriteError};
+use crate::sync::{Pool, PoolGuard, WriteError};
 
 const KIND_HASHMAP_CAPACITY: usize = 5;
 
@@ -18,8 +18,8 @@ pub trait Kind<T: Eq + Hash> {
 ///
 /// # Example
 ///
-/// ```no_run
-/// use cobra_rs::transport::sync::{KindPool, Kind};
+/// ```
+/// use cobra_rs::sync::{KindPool, Kind};
 ///
 /// #[derive(Debug)]
 /// struct Value {

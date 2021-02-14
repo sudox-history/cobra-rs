@@ -1,4 +1,4 @@
-use cobra_rs::transport::sync::{KindPool, Kind};
+use cobra_rs::sync::{KindPool, Kind};
 
 #[derive(Debug)]
 struct Value {

@@ -1,5 +1,5 @@
 use crate::transport::conn::Conn;
-use crate::transport::sync::Pool;
+use crate::sync::Pool;
 use tokio::net::{ToSocketAddrs, TcpListener};
 use std::io;
 use std::sync::Arc;
