@@ -1,63 +1,101 @@
-use crate::manager::wrapper::{Middleware, Beginner};
 use std::sync::Arc;
-use tokio::sync::RwLock;
-use crate::transport::sync::{Kind, WriteError};
 
-pub struct Context<M: ?Sized> {
-    pub middleware: Arc<dyn Middleware>,
-    pub kind_counter: Arc<RwLock<u8>>,
+use tokio::sync::RwLock;
+
+use crate::manager::builder::{CompressionManager, ConnManager, EncryptionManager, PingManager};
+use crate::sync::WriteError;
+use crate::transport::frame::Frame;
+
+struct ContextState {
+    kind_counter: RwLock<u8>,
+    conn: Arc<dyn ConnManager>,
+    ping: Arc<dyn PingManager>,
+    encryption: Arc<dyn EncryptionManager>,
+    compression: Arc<dyn CompressionManager>,
 }
 
-impl<M: Beginner> Context<M> {
-    pub fn new(beginner: M) -> Self {
+impl ContextState {
+    pub async fn read(&self, kind: u8) -> Option<Vec<u8>> {
+        let package = self.conn
+            .read(kind)
+            .await?
+            .get_data();
+        let package = self.compression
+            .decompress(package);
+        let package = self.encryption
+            .decrypt(package);
+
+        Some(package)
+    }
+
+    pub async fn write(&self, kind: u8, package: Vec<u8>) -> Result<(), WriteError<Vec<u8>>> {
+        let package = self.encryption
+            .encrypt(package);
+        let package = self.compression
+            .compress(package);
+        let frame = Frame::new(kind, package);
+
+        self.conn
+            .write(frame)
+            .await
+            .map_err(|err| err.map(|frame| frame.get_data()))
+    }
+}
+
+pub struct Context {
+    state: Arc<ContextState>,
+}
+
+impl Context {
+    pub fn new(conn: Arc<dyn ConnManager>,
+               ping: Arc<dyn PingManager>,
+               encryption: Arc<dyn EncryptionManager>,
+               compression: Arc<dyn CompressionManager>) -> Self {
         Context {
-            middleware: Arc::new(beginner),
-            kind_counter: Arc::new(RwLock::new(0)),
+            state: Arc::new(ContextState {
+                kind_counter: RwLock::new(1),
+                conn,
+                ping,
+                encryption,
+                compression,
+            })
         }
     }
-}
 
-impl<M: Middleware> Context<M> {
-    pub async fn get_kind_conn(&self) -> KindConn<M> {
-        *self.kind_counter.write().await += 1;
-        let kind = *self.kind_counter.read().await - 1;
-        KindConn::new(kind, self.clone())
+    pub async fn get_kind_conn(&self) -> KindConn {
+        *self.state.kind_counter.write().await += 1;
+        let kind = *self.state.kind_counter.read().await - 1;
+        KindConn::new(kind, self.state.clone())
     }
+
 }
 
-impl<M: Middleware> Clone for Context<M> {
+impl Clone for Context {
     fn clone(&self) -> Self {
         Context {
-            middleware: self.middleware.clone(),
-            kind_counter: self.kind_counter.clone(),
+            state: self.state.clone(),
         }
     }
 }
 
-pub struct KindConn<M: Middleware> {
+pub struct KindConn {
     kind: u8,
-    context: Context<M>,
+    context_state: Arc<ContextState>,
 }
 
-impl<M: Middleware> KindConn<M> {
-    fn new(kind: u8 , context: Context<M>) -> Self {
+impl KindConn {
+    fn new(kind: u8, context_state: Arc<ContextState>) -> Self {
         KindConn {
             kind,
-            context,
+            context_state,
         }
     }
 
-    pub fn read(&self) -> Option<M::After> {
-        unimplemented!()
+    pub async fn read(&self) -> Option<Vec<u8>> {
+        self.context_state.read(self.kind).await
     }
 
-    pub fn write(&self, package: M::After) -> Result<(), WriteError<M::After>> {
-        unimplemented!()
-    }
-}
-
-impl<M: Middleware> Kind<u8> for KindConn<M> {
-    fn kind(&self) -> u8 {
-        self.kind
+    pub async fn write(&self, package: Vec<u8>) -> Result<(), WriteError<Vec<u8>>> {
+        self.context_state.write(self.kind, package).await
     }
 }

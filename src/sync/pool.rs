@@ -15,6 +15,15 @@ pub enum WriteError<T> {
     Closed(T),
 }
 
+impl<T> WriteError<T> {
+    pub fn map<F, O: FnOnce(T) -> F>(self, op: O) -> WriteError<F> {
+        match self {
+            WriteError::Rejected(e) => WriteError::Rejected(op(e)),
+            WriteError::Closed(e) => WriteError::Rejected(op(e)),
+        }
+    }
+}
+
 /// Asynchronous value pool
 ///
 /// Can be used to atomically transfer data between tasks
