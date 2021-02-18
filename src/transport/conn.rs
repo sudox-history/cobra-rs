@@ -3,8 +3,8 @@ use std::io;
 use std::sync::Arc;
 
 use crate::sync::{Pool, KindPool, WriteError};
-use crate::transport::buffer::ConcatBuffer;
-use crate::transport::frame::Frame;
+use crate::mem::ConcatBuf;
+use crate::mem::Frame;
 use tokio::sync::Notify;
 use std::ops::DerefMut;
 
@@ -23,7 +23,7 @@ impl Conn {
         let read_pool = KindPool::new();
         let write_pool = Pool::new();
 
-        let buffer = ConcatBuffer::default();
+        let buffer = ConcatBuf::default();
 
         let conn_close_notifier = Arc::new(Notify::new());
 
@@ -80,7 +80,7 @@ impl Conn {
 
     async fn read_loop(read_tcp_stream: Arc<TcpStream>,
                        read_pool: KindPool<u8, Frame>,
-                       mut buffer: ConcatBuffer<Frame>) {
+                       mut buffer: ConcatBuf<Frame>) {
         loop {
             if read_tcp_stream.readable().await.is_err() {
                 break;

@@ -1,6 +1,8 @@
-use crate::transport::buffer::Chunk;
 use std::ops::{Deref, DerefMut};
-use bytes::BufMut;
+
+use bytes::{BufMut, BytesMut};
+
+use crate::mem::Chunk;
 use crate::sync::Kind;
 
 const LEN_BYTES: usize = 2;
@@ -8,13 +10,13 @@ const KIND_BYTES: usize = 1;
 
 #[derive(Debug, Default)]
 pub struct Frame {
-    data: Vec<u8>,
+    data: BytesMut,
 }
 
 impl Frame {
     pub fn new<T: Deref<Target=[u8]>>(kind: u8, body: T) -> Self {
         let size = Frame::header_len() + KIND_BYTES + body.len();
-        let mut data = Vec::with_capacity(size);
+        let mut data = BytesMut::with_capacity(size);
         data.put_uint((body.len() + KIND_BYTES) as u64, LEN_BYTES);
         data.put_uint(kind as u64, KIND_BYTES);
         data.put_slice(&body);
@@ -41,15 +43,15 @@ impl Chunk for Frame {
         LEN_BYTES
     }
 
-    fn with_capacity_filled(capacity: usize) -> Self {
+    fn with_capacity(capacity: usize) -> Self {
         Frame {
-            data: vec![0; capacity],
+            data: BytesMut::with_capacity(capacity),
         }
     }
 }
 
 impl Deref for Frame {
-    type Target = Vec<u8>;
+    type Target = BytesMut;
 
     fn deref(&self) -> &Self::Target {
         &self.data

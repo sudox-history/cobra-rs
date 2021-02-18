@@ -1,21 +1,21 @@
 use cobra_rs::sync::{Kind, KindPool};
 
 #[derive(Debug)]
-struct TestFrame {
+struct TestValue {
     key: u8,
     value: i32,
 }
 
-impl TestFrame {
+impl TestValue {
     fn create(key: u8, value: i32) -> Self {
-        TestFrame {
+        TestValue {
             key,
             value,
         }
     }
 }
 
-impl Kind<u8> for TestFrame {
+impl Kind<u8> for TestValue {
     fn kind(&self) -> u8 {
         self.key
     }
@@ -30,8 +30,8 @@ async fn one_read_one_write() {
     const KIND_B: u8 = 1;
 
     tokio::spawn(async move {
-        let package_a = TestFrame::create(KIND_A, 0);
-        let package_b = TestFrame::create(KIND_B, 1);
+        let package_a = TestValue::create(KIND_A, 0);
+        let package_b = TestValue::create(KIND_B, 1);
         write_pool.write(package_a).await.unwrap();
         write_pool.write(package_b).await.unwrap();
     });
@@ -59,15 +59,15 @@ async fn one_read_multiple_write() {
     const KIND_B: u8 = 1;
 
     tokio::spawn(async move {
-        let package_a = TestFrame::create(KIND_A, 0);
-        let package_b = TestFrame::create(KIND_A, 1);
+        let package_a = TestValue::create(KIND_A, 0);
+        let package_b = TestValue::create(KIND_A, 1);
         write_pool_a.write(package_a).await.unwrap();
         write_pool_a.write(package_b).await.unwrap();
     });
 
     tokio::spawn(async move {
-        let package_a = TestFrame::create(KIND_B, 2);
-        let package_b = TestFrame::create(KIND_B, 3);
+        let package_a = TestValue::create(KIND_B, 2);
+        let package_b = TestValue::create(KIND_B, 3);
         write_pool_b.write(package_a).await.unwrap();
         write_pool_b.write(package_b).await.unwrap();
     });
@@ -104,8 +104,8 @@ async fn multiple_read_one_write() {
     const KIND_B: u8 = 1;
 
     tokio::spawn(async move {
-        let package_a = TestFrame::create(KIND_A, 0);
-        let package_b = TestFrame::create(KIND_B, 1);
+        let package_a = TestValue::create(KIND_A, 0);
+        let package_b = TestValue::create(KIND_B, 1);
         write_pool.write(package_a).await.unwrap();
         write_pool.write(package_b).await.unwrap();
     });
@@ -133,12 +133,12 @@ async fn multiple_read_multiple_write() {
     const KIND_B: u8 = 1;
 
     tokio::spawn(async move {
-        let package_a = TestFrame::create(KIND_A, 0);
+        let package_a = TestValue::create(KIND_A, 0);
         write_pool_a.write(package_a).await.unwrap();
     });
 
     tokio::spawn(async move {
-        let package_b = TestFrame::create(KIND_B, 1);
+        let package_b = TestValue::create(KIND_B, 1);
         write_pool_b.write(package_b).await.unwrap();
     });
 
@@ -155,19 +155,19 @@ async fn multiple_read_multiple_write() {
 
 #[tokio::test]
 async fn write_after_close() {
-    let close_pool: KindPool<u8, TestFrame> = KindPool::new();
+    let close_pool: KindPool<u8, TestValue> = KindPool::new();
     let write_pool = close_pool.clone();
 
     const KIND_A: u8 = 0;
 
     close_pool.close().await;
-    let package = TestFrame::create(KIND_A, 0);
+    let package = TestValue::create(KIND_A, 0);
     assert!(write_pool.write(package).await.is_err())
 }
 
 #[tokio::test]
 async fn read_after_close() {
-    let read_pool: KindPool<u8, TestFrame> = KindPool::new();
+    let read_pool: KindPool<u8, TestValue> = KindPool::new();
     let write_pool = read_pool.clone();
 
     const KIND_A: u8 = 0;
@@ -190,14 +190,14 @@ async fn data_order() {
 
     tokio::spawn(async move {
         for i in 0..5 {
-            let package = TestFrame::create(KIND_A, i);
+            let package = TestValue::create(KIND_A, i);
             write_pool_a.write(package).await.unwrap();
         }
     });
 
     tokio::spawn(async move {
         for i in 0..5 {
-            let package = TestFrame::create(KIND_B, i);
+            let package = TestValue::create(KIND_B, i);
             write_pool_b.write(package).await.unwrap();
         }
     });
@@ -223,7 +223,7 @@ async fn stress_test() {
 
     tokio::spawn(async move {
         for i in 0..10000 {
-            let package = TestFrame::create(0, i);
+            let package = TestValue::create(0, i);
             assert!(write_pool.write(package).await.is_ok());
         }
     });

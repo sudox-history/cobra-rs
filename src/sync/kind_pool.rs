@@ -8,7 +8,9 @@ use crate::sync::{Pool, PoolGuard, WriteError};
 
 const KIND_HASHMAP_CAPACITY: usize = 5;
 
+/// Trait used to split data into different types
 pub trait Kind<T: Eq + Hash> {
+    /// Returns value kind
     fn kind(&self) -> T;
 }
 
@@ -76,7 +78,6 @@ pub trait Kind<T: Eq + Hash> {
 ///     pool.close().await;
 /// }
 /// ```
-
 pub struct KindPool<K: Eq + Hash, V: Kind<K>> {
     state: Arc<KindPoolState<K, V>>
 }
@@ -87,6 +88,7 @@ struct KindPoolState<K: Eq + Hash, V: Kind<K>> {
 }
 
 impl<K: Eq + Hash, V: Kind<K>> KindPool<K, V> {
+    /// Creates new kind pool
     pub fn new() -> Self {
         Default::default()
     }
@@ -146,15 +148,15 @@ impl<K: Eq + Hash, V: Kind<K>> KindPoolState<K, V> {
             .clone()
     }
 
-    async fn is_closed(&self) -> bool {
-        *self.closed.read().await
-    }
-
     async fn close(&self) {
         *self.closed.write().await = true;
         for (_, pool) in self.pools.read().await.iter() {
             pool.close();
         }
+    }
+
+    async fn is_closed(&self) -> bool {
+        *self.closed.read().await
     }
 }
 
