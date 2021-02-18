@@ -1,12 +1,13 @@
 use std::io;
+use std::sync::Arc;
 
 use async_trait::async_trait;
 
-use crate::manager::context::{Context, KindConn};
+use crate::manager::context::Context;
+use crate::manager::empty_realisations::{NilCompression, NilEncryption, NilPing};
 use crate::sync::WriteError;
 use crate::transport::frame::Frame;
-use std::sync::Arc;
-use crate::manager::empty_realisations::{NilPing, NilEncryption, NilCompression};
+use crate::manager::kind_conn::{CloseCode, KindConn};
 
 #[async_trait]
 pub trait ConnManager: Send + Sync {
@@ -15,6 +16,11 @@ pub trait ConnManager: Send + Sync {
     async fn read(&self, kind: u8) -> Option<Frame>;
 
     async fn write(&self, frame: Frame) -> Result<(), WriteError<Frame>>;
+
+    async fn close(&self, code: CloseCode);
+
+    // Return None if conn is able, else return close code
+    async fn is_close(&self) -> Option<CloseCode>;
 }
 
 #[async_trait]
@@ -58,22 +64,22 @@ impl Builder {
         Default::default()
     }
 
-    pub fn set_conn<T: 'static +  ConnManager>(mut self, conn: T) -> Self {
+    pub fn set_conn<T: 'static + ConnManager>(mut self, conn: T) -> Self {
         self.conn = Some(Arc::new(conn));
         self
     }
 
-    pub fn set_ping<T: 'static +  PingManager>(mut self, ping: T) -> Self {
+    pub fn set_ping<T: 'static + PingManager>(mut self, ping: T) -> Self {
         self.ping = Some(Arc::new(ping));
         self
     }
 
-    pub fn set_encryption<T: 'static +  EncryptionManager >(mut self, encryption: T) -> Self {
+    pub fn set_encryption<T: 'static + EncryptionManager>(mut self, encryption: T) -> Self {
         self.encryption = Some(Arc::new(encryption));
         self
     }
 
-    pub fn set_compression<T: 'static +  CompressionManager>(mut self, compression: T) -> Self {
+    pub fn set_compression<T: 'static + CompressionManager>(mut self, compression: T) -> Self {
         self.compression = Some(Arc::new(compression));
         self
     }
@@ -97,7 +103,6 @@ impl Builder {
         };
 
         let context = Context::new(conn.clone(),
-                                   ping.clone(),
                                    encryption.clone(),
                                    compression);
 
@@ -106,7 +111,7 @@ impl Builder {
 
         let ping_context = context.clone();
         tokio::spawn(async move {
-            ping.init(ping_context).await;
+            ping.init(ping_context).await
         });
 
         Ok(context.get_kind_conn().await)

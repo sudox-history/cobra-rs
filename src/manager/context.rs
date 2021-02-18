@@ -2,20 +2,20 @@ use std::sync::Arc;
 
 use tokio::sync::RwLock;
 
-use crate::manager::builder::{CompressionManager, ConnManager, EncryptionManager, PingManager};
+use crate::manager::builder::{CompressionManager, ConnManager, EncryptionManager};
 use crate::sync::WriteError;
 use crate::transport::frame::Frame;
+use crate::manager::kind_conn::{KindConn, CloseCode};
 
-struct ContextState {
+pub(crate) struct ContextState {
     kind_counter: RwLock<u8>,
     conn: Arc<dyn ConnManager>,
-    ping: Arc<dyn PingManager>,
     encryption: Arc<dyn EncryptionManager>,
     compression: Arc<dyn CompressionManager>,
 }
 
 impl ContextState {
-    pub async fn read(&self, kind: u8) -> Option<Vec<u8>> {
+    pub(crate) async fn read(&self, kind: u8) -> Option<Vec<u8>> {
         let package = self.conn
             .read(kind)
             .await?
@@ -28,7 +28,7 @@ impl ContextState {
         Some(package)
     }
 
-    pub async fn write(&self, kind: u8, package: Vec<u8>) -> Result<(), WriteError<Vec<u8>>> {
+    pub(crate) async fn write(&self, kind: u8, package: Vec<u8>) -> Result<(), WriteError<Vec<u8>>> {
         let package = self.encryption
             .encrypt(package);
         let package = self.compression
@@ -40,6 +40,14 @@ impl ContextState {
             .await
             .map_err(|err| err.map(|frame| frame.get_data()))
     }
+
+    pub(crate) async fn close(&self, code: CloseCode) {
+        self.conn.close(code).await
+    }
+
+    pub(crate) async fn is_close(&self) -> Option<CloseCode> {
+        self.conn.is_close().await
+    }
 }
 
 pub struct Context {
@@ -48,14 +56,12 @@ pub struct Context {
 
 impl Context {
     pub fn new(conn: Arc<dyn ConnManager>,
-               ping: Arc<dyn PingManager>,
                encryption: Arc<dyn EncryptionManager>,
                compression: Arc<dyn CompressionManager>) -> Self {
         Context {
             state: Arc::new(ContextState {
                 kind_counter: RwLock::new(1),
                 conn,
-                ping,
                 encryption,
                 compression,
             })
@@ -67,7 +73,6 @@ impl Context {
         let kind = *self.state.kind_counter.read().await - 1;
         KindConn::new(kind, self.state.clone())
     }
-
 }
 
 impl Clone for Context {
@@ -75,27 +80,5 @@ impl Clone for Context {
         Context {
             state: self.state.clone(),
         }
-    }
-}
-
-pub struct KindConn {
-    kind: u8,
-    context_state: Arc<ContextState>,
-}
-
-impl KindConn {
-    fn new(kind: u8, context_state: Arc<ContextState>) -> Self {
-        KindConn {
-            kind,
-            context_state,
-        }
-    }
-
-    pub async fn read(&self) -> Option<Vec<u8>> {
-        self.context_state.read(self.kind).await
-    }
-
-    pub async fn write(&self, package: Vec<u8>) -> Result<(), WriteError<Vec<u8>>> {
-        self.context_state.write(self.kind, package).await
     }
 }

@@ -14,7 +14,7 @@ impl NilPing {
 
 #[async_trait]
 impl PingManager for NilPing {
-    async fn init(&self, context: Context) { }
+    async fn init(&self, _context: Context) { }
 }
 
 pub struct NilEncryption {}
@@ -50,7 +50,7 @@ impl NilCompression {
 
 #[async_trait]
 impl CompressionManager for NilCompression {
-    async fn init(&self, context: Context) { }
+    async fn init(&self, _context: Context) { }
 
     fn compress(&self, frame: Vec<u8>) -> Vec<u8> {
         frame
