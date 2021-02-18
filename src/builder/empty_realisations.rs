@@ -1,32 +1,33 @@
-use crate::manager::builder::{EncryptionManager, PingManager, CompressionManager, BuildError};
-use crate::manager::context::Context;
+use std::sync::Arc;
 
 use async_trait::async_trait;
-use std::sync::Arc;
+
+use crate::builder::builder::{BuildError, CompressionProvider, EncryptionProvider, PingProvider};
+use crate::builder::context::Context;
 
 pub struct NilPing {}
 
 impl NilPing {
     pub fn new() -> Arc<Self> {
-        Arc::new(NilPing{})
+        Arc::new(NilPing {})
     }
 }
 
 #[async_trait]
-impl PingManager for NilPing {
-    async fn init(&self, _context: Context) { }
+impl PingProvider for NilPing {
+    async fn init(&self, _context: Context) {}
 }
 
 pub struct NilEncryption {}
 
 impl NilEncryption {
     pub fn new() -> Arc<Self> {
-        Arc::new(NilEncryption{})
+        Arc::new(NilEncryption {})
     }
 }
 
 #[async_trait]
-impl EncryptionManager for NilEncryption {
+impl EncryptionProvider for NilEncryption {
     async fn init(&self, _context: Context) -> Result<(), BuildError> {
         Ok(())
     }
@@ -44,13 +45,13 @@ pub struct NilCompression {}
 
 impl NilCompression {
     pub fn new() -> Arc<Self> {
-        Arc::new(NilCompression{})
+        Arc::new(NilCompression {})
     }
 }
 
 #[async_trait]
-impl CompressionManager for NilCompression {
-    async fn init(&self, _context: Context) { }
+impl CompressionProvider for NilCompression {
+    async fn init(&self, _context: Context) {}
 
     fn compress(&self, frame: Vec<u8>) -> Vec<u8> {
         frame

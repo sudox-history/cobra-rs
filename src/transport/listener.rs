@@ -1,9 +1,11 @@
-use crate::transport::conn::Conn;
-use crate::sync::Pool;
-use tokio::net::{ToSocketAddrs, TcpListener};
 use std::io;
 use std::sync::Arc;
+
+use tokio::net::{TcpListener, ToSocketAddrs};
 use tokio::sync::Notify;
+
+use crate::sync::Pool;
+use crate::transport::conn::Conn;
 
 pub struct Listener {
     connections_pool: Pool<Conn>,
@@ -17,14 +19,14 @@ impl Listener {
         let close_notifier = Arc::new(Notify::new());
 
         tokio::spawn(Listener::accept_loop(
-            tcp_listener.clone(),
+            tcp_listener,
             connections_pool.clone(),
-            close_notifier.clone()
+            close_notifier.clone(),
         ));
 
         Ok(Listener {
             connections_pool,
-            close_notifier
+            close_notifier,
         })
     }
 
@@ -33,9 +35,11 @@ impl Listener {
                          close_notifier: Arc<Notify>) {
         while let Ok((socket, _)) = tcp_listener.accept().await {
             let conn = Conn::from_raw(socket,
-                                          Some(close_notifier.clone())).await;
+                                      Some(close_notifier.clone()))
+                .await
+                .unwrap();
             if connections_pool.write(conn).await.is_err() {
-                break
+                break;
             }
         }
         connections_pool.close();

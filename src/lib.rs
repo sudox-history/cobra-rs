@@ -1,3 +1,4 @@
 pub mod transport;
 pub mod sync;
-pub mod manager;
+pub mod builder;
+pub mod providers;

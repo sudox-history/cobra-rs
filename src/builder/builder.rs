@@ -1,35 +1,37 @@
-use std::io;
+use std::net::SocketAddr;
 use std::sync::Arc;
 
 use async_trait::async_trait;
 
-use crate::manager::context::Context;
-use crate::manager::empty_realisations::{NilCompression, NilEncryption, NilPing};
+use crate::builder::context::{Context, ContextMode};
+use crate::builder::empty_realisations::{NilCompression, NilEncryption, NilPing};
+use crate::builder::kind_conn::KindConn;
 use crate::sync::WriteError;
 use crate::transport::frame::Frame;
-use crate::manager::kind_conn::{CloseCode, KindConn};
 
 #[async_trait]
-pub trait ConnManager: Send + Sync {
-    async fn connect(&self) -> io::Result<()>;
-
+pub trait ConnProvider: Send + Sync {
     async fn read(&self, kind: u8) -> Option<Frame>;
 
     async fn write(&self, frame: Frame) -> Result<(), WriteError<Frame>>;
 
-    async fn close(&self, code: CloseCode);
+    fn local_addr(&self) -> SocketAddr;
+
+    fn peer_addr(&self) -> SocketAddr;
+
+    async fn close(&self, code: u8);
 
     // Return None if conn is able, else return close code
-    async fn is_close(&self) -> Option<CloseCode>;
+    async fn is_close(&self) -> Option<u8>;
 }
 
 #[async_trait]
-pub trait PingManager: Send + Sync {
+pub trait PingProvider: Send + Sync {
     async fn init(&self, context: Context);
 }
 
 #[async_trait]
-pub trait EncryptionManager: Send + Sync {
+pub trait EncryptionProvider: Send + Sync {
     async fn init(&self, context: Context) -> Result<(), BuildError>;
 
     fn encrypt(&self, frame: Vec<u8>) -> Vec<u8>;
@@ -38,7 +40,7 @@ pub trait EncryptionManager: Send + Sync {
 }
 
 #[async_trait]
-pub trait CompressionManager: Send + Sync {
+pub trait CompressionProvider: Send + Sync {
     async fn init(&self, context: Context);
 
     fn compress(&self, frame: Vec<u8>) -> Vec<u8>;
@@ -48,15 +50,15 @@ pub trait CompressionManager: Send + Sync {
 
 pub enum BuildError {
     ConnNotSet,
-    ConnectionFailed,
     EncryptionInitFailed,
 }
 
+#[derive(Default)]
 pub struct Builder {
-    conn: Option<Arc<dyn ConnManager>>,
-    ping: Option<Arc<dyn PingManager>>,
-    encryption: Option<Arc<dyn EncryptionManager>>,
-    compression: Option<Arc<dyn CompressionManager>>,
+    conn: Option<Arc<dyn ConnProvider>>,
+    ping: Option<Arc<dyn PingProvider>>,
+    encryption: Option<Arc<dyn EncryptionProvider>>,
+    compression: Option<Arc<dyn CompressionProvider>>,
 }
 
 impl Builder {
@@ -64,22 +66,22 @@ impl Builder {
         Default::default()
     }
 
-    pub fn set_conn<T: 'static + ConnManager>(mut self, conn: T) -> Self {
+    pub fn set_conn<T: 'static + ConnProvider>(mut self, conn: T) -> Self {
         self.conn = Some(Arc::new(conn));
         self
     }
 
-    pub fn set_ping<T: 'static + PingManager>(mut self, ping: T) -> Self {
+    pub fn set_ping<T: 'static + PingProvider>(mut self, ping: T) -> Self {
         self.ping = Some(Arc::new(ping));
         self
     }
 
-    pub fn set_encryption<T: 'static + EncryptionManager>(mut self, encryption: T) -> Self {
+    pub fn set_encryption<T: 'static + EncryptionProvider>(mut self, encryption: T) -> Self {
         self.encryption = Some(Arc::new(encryption));
         self
     }
 
-    pub fn set_compression<T: 'static + CompressionManager>(mut self, compression: T) -> Self {
+    pub fn set_compression<T: 'static + CompressionProvider>(mut self, compression: T) -> Self {
         self.compression = Some(Arc::new(compression));
         self
     }
@@ -104,27 +106,15 @@ impl Builder {
 
         let context = Context::new(conn.clone(),
                                    encryption.clone(),
-                                   compression);
+                                   compression,
+                                   ContextMode::Handle);
+        encryption.init(context.clone(ContextMode::Raw)).await?;
 
-        conn.connect().await.map_err(|_| BuildError::ConnectionFailed)?;
-        encryption.init(context.clone()).await?;
-
-        let ping_context = context.clone();
+        let ping_context = context.clone(ContextMode::Raw);
         tokio::spawn(async move {
             ping.init(ping_context).await
         });
 
         Ok(context.get_kind_conn().await)
-    }
-}
-
-impl Default for Builder {
-    fn default() -> Self {
-        Builder {
-            conn: None,
-            ping: None,
-            encryption: None,
-            compression: None,
-        }
     }
 }

@@ -1,22 +1,29 @@
-use tokio::net::{TcpStream, ToSocketAddrs};
 use std::io;
+use std::ops::DerefMut;
 use std::sync::Arc;
 
-use crate::sync::{Pool, KindPool, WriteError};
+use tokio::net::{TcpStream, ToSocketAddrs};
+use tokio::sync::Notify;
+
+use crate::sync::{KindPool, Pool, WriteError};
 use crate::transport::buffer::ConcatBuffer;
 use crate::transport::frame::Frame;
-use tokio::sync::Notify;
-use std::ops::DerefMut;
+use std::net::SocketAddr;
 
 pub struct Conn {
     write_pool: Pool<Frame>,
     read_pool: KindPool<u8, Frame>,
     conn_close_notifier: Arc<Notify>,
+    local_addr: SocketAddr,
+    peer_addr: SocketAddr,
 }
 
 impl Conn {
     pub(crate) async fn from_raw(tcp_stream: TcpStream,
-                                 server_close_notifier: Option<Arc<Notify>>) -> Self {
+                                 server_close_notifier: Option<Arc<Notify>>) -> io::Result<Self> {
+        let local_addr = tcp_stream.local_addr()?;
+        let peer_addr = tcp_stream.peer_addr()?;
+
         let read_tcp_stream = Arc::new(tcp_stream);
         let write_tcp_stream = read_tcp_stream.clone();
 
@@ -31,32 +38,31 @@ impl Conn {
             server_close_notifier,
             conn_close_notifier.clone(),
             read_pool.clone(),
-            write_pool.clone()
+            write_pool.clone(),
         ));
 
         tokio::spawn(Conn::read_loop(
             read_tcp_stream,
             read_pool.clone(),
-            buffer
+            buffer,
         ));
 
         tokio::spawn(Conn::write_loop(
             write_tcp_stream,
-            write_pool.clone()
+            write_pool.clone(),
         ));
 
-        Conn {
+        Ok(Conn {
             write_pool,
             read_pool,
             conn_close_notifier,
-        }
+            local_addr,
+            peer_addr,
+        })
     }
 
     pub async fn connect<T: ToSocketAddrs>(addr: T) -> io::Result<Self> {
-        Ok(
-            Conn::from_raw(TcpStream::connect(addr).await?, None)
-                .await
-        )
+        Conn::from_raw(TcpStream::connect(addr).await?, None).await
     }
 
     async fn close_task(server_close_notifier: Option<Arc<Notify>>,
@@ -111,7 +117,7 @@ impl Conn {
                 match write_tcp_stream.try_write(&frame) {
                     Ok(n) => {
                         **frame = frame.split_off(n);
-                    },
+                    }
                     Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => continue,
                     Err(_) => break
                 }
@@ -134,6 +140,18 @@ impl Conn {
     // Return WriteError<F> if connection close
     pub async fn write(&self, frame: Frame) -> Result<(), WriteError<Frame>> {
         self.write_pool.write(frame).await
+    }
+
+    pub fn local_addr(&self) -> SocketAddr {
+        self.local_addr
+    }
+
+    pub fn peer_addr(&self) -> SocketAddr {
+        self.peer_addr
+    }
+
+    pub fn close(&self) {
+        self.conn_close_notifier.notify_one();
     }
 }
 
