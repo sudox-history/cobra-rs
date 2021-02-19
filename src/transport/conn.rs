@@ -1,4 +1,5 @@
 use std::io;
+use std::net::SocketAddr;
 use std::ops::DerefMut;
 use std::sync::Arc;
 
@@ -8,9 +9,9 @@ use tokio::sync::Notify;
 use crate::sync::{KindPool, Pool, WriteError};
 use crate::transport::buffer::ConcatBuffer;
 use crate::transport::frame::Frame;
-use std::net::SocketAddr;
 
 pub struct Conn {
+    tcp_stream: Arc<TcpStream>,
     write_pool: Pool<Frame>,
     read_pool: KindPool<u8, Frame>,
     conn_close_notifier: Arc<Notify>,
@@ -24,8 +25,9 @@ impl Conn {
         let local_addr = tcp_stream.local_addr()?;
         let peer_addr = tcp_stream.peer_addr()?;
 
-        let read_tcp_stream = Arc::new(tcp_stream);
-        let write_tcp_stream = read_tcp_stream.clone();
+        let tcp_stream = Arc::new(tcp_stream);
+        let read_tcp_stream = tcp_stream.clone();
+        let write_tcp_stream = tcp_stream.clone();
 
         let read_pool = KindPool::new();
         let write_pool = Pool::new();
@@ -53,6 +55,7 @@ impl Conn {
         ));
 
         Ok(Conn {
+            tcp_stream,
             write_pool,
             read_pool,
             conn_close_notifier,
@@ -148,6 +151,10 @@ impl Conn {
 
     pub fn peer_addr(&self) -> SocketAddr {
         self.peer_addr
+    }
+
+    pub async fn readable(&self) -> io::Result<()> {
+        self.tcp_stream.readable().await
     }
 
     pub fn close(&self) {

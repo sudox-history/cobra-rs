@@ -1,5 +1,6 @@
 use std::net::SocketAddr;
 use std::sync::Arc;
+use std::io;
 
 use tokio::sync::RwLock;
 
@@ -95,6 +96,10 @@ impl ContextState {
 
     pub(crate) fn peer_addr(&self) -> SocketAddr {
         self.conn.peer_addr()
+    }
+
+    pub(crate) async fn readable(&self) -> io::Result<()> {
+        self.conn.readable().await
     }
 
     pub(crate) async fn close(&self, code: u8) {

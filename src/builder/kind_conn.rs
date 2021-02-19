@@ -1,3 +1,4 @@
+use std::io;
 use std::net::SocketAddr;
 use std::sync::Arc;
 
@@ -43,6 +44,10 @@ impl KindConn {
 
     pub fn peer_addr(&self) -> SocketAddr {
         self.context_state.peer_addr()
+    }
+
+    pub async fn readable(&self) -> io::Result<()> {
+        self.context_state.readable().await
     }
 
     pub async fn close(&self, code: u8) {

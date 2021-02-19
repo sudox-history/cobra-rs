@@ -46,6 +46,10 @@ impl ConnProvider for TcpConnProvider {
         self.conn.peer_addr()
     }
 
+    async fn readable(&self) -> io::Result<()> {
+        self.conn.readable().await
+    }
+
     async fn close(&self, code: u8) {
         self.conn.close();
         *self.error_code.write().await = code;

@@ -1,3 +1,4 @@
+use std::io;
 use std::net::SocketAddr;
 use std::sync::Arc;
 
@@ -18,6 +19,8 @@ pub trait ConnProvider: Send + Sync {
     fn local_addr(&self) -> SocketAddr;
 
     fn peer_addr(&self) -> SocketAddr;
+
+    async fn readable(&self) -> io::Result<()>;
 
     async fn close(&self, code: u8);
 
@@ -108,12 +111,10 @@ impl Builder {
                                    encryption.clone(),
                                    compression,
                                    ContextMode::Handle);
+
+        ping.init(context.clone(ContextMode::Handle)).await;
         encryption.init(context.clone(ContextMode::Raw)).await?;
 
-        let ping_context = context.clone(ContextMode::Raw);
-        tokio::spawn(async move {
-            ping.init(ping_context).await
-        });
 
         Ok(context.get_kind_conn().await)
     }
