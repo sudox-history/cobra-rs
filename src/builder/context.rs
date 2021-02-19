@@ -1,30 +1,26 @@
-use std::net::SocketAddr;
 use std::sync::Arc;
-use std::io;
 
 use tokio::sync::RwLock;
 
 use crate::builder::builder::{CompressionProvider, ConnProvider, EncryptionProvider};
 use crate::builder::kind_conn::KindConn;
-use crate::sync::WriteError;
-use crate::transport::frame::Frame;
-
-pub struct Context {
-    state: Arc<ContextState>,
-    mode: ContextMode,
-}
 
 pub(crate) struct ContextState {
     kind_counter: RwLock<u8>,
-    conn: Arc<dyn ConnProvider>,
-    encryption: Arc<dyn EncryptionProvider>,
-    compression: Arc<dyn CompressionProvider>,
+    pub(crate) conn: Arc<dyn ConnProvider>,
+    pub(crate) encryption: Arc<dyn EncryptionProvider>,
+    pub(crate) compression: Arc<dyn CompressionProvider>,
 }
 
 #[derive(Copy, Clone)]
 pub(crate) enum ContextMode {
     Raw,
     Handle,
+}
+
+pub struct Context {
+    state: Arc<ContextState>,
+    mode: ContextMode,
 }
 
 impl Context {
@@ -54,59 +50,5 @@ impl Context {
             state: self.state.clone(),
             mode,
         }
-    }
-}
-
-impl ContextState {
-    pub(crate) async fn read(&self, kind: u8) -> Option<Vec<u8>> {
-        let package = self.conn
-            .read(kind)
-            .await?
-            .get_data();
-        let package = self.compression
-            .decompress(package);
-        let package = self.encryption
-            .decrypt(package);
-
-        Some(package)
-    }
-
-    pub(crate) async fn write(&self, kind: u8, package: Vec<u8>,
-                              mode: ContextMode) -> Result<(), WriteError<Vec<u8>>> {
-        let frame = match mode {
-            ContextMode::Raw => Frame::new(kind, package),
-            ContextMode::Handle => {
-                let package = self.encryption
-                    .encrypt(package);
-                let package = self.compression
-                    .compress(package);
-                Frame::new(kind, package)
-            }
-        };
-
-        self.conn
-            .write(frame)
-            .await
-            .map_err(|err| err.map(|frame| frame.get_data()))
-    }
-
-    pub(crate) fn local_addr(&self) -> SocketAddr {
-        self.conn.local_addr()
-    }
-
-    pub(crate) fn peer_addr(&self) -> SocketAddr {
-        self.conn.peer_addr()
-    }
-
-    pub(crate) async fn readable(&self) -> io::Result<()> {
-        self.conn.readable().await
-    }
-
-    pub(crate) async fn close(&self, code: u8) {
-        self.conn.close(code).await
-    }
-
-    pub(crate) async fn is_close(&self) -> Option<u8> {
-        self.conn.is_close().await
     }
 }

@@ -5,7 +5,7 @@ use std::sync::Arc;
 use async_trait::async_trait;
 
 use crate::builder::context::{Context, ContextMode};
-use crate::builder::empty_realisations::{NilCompression, NilEncryption, NilPing};
+use crate::builder::empty_realisations::EmptyRealisation;
 use crate::builder::kind_conn::KindConn;
 use crate::sync::WriteError;
 use crate::transport::frame::Frame;
@@ -56,12 +56,11 @@ pub enum BuildError {
     EncryptionInitFailed,
 }
 
-#[derive(Default)]
 pub struct Builder {
     conn: Option<Arc<dyn ConnProvider>>,
-    ping: Option<Arc<dyn PingProvider>>,
-    encryption: Option<Arc<dyn EncryptionProvider>>,
-    compression: Option<Arc<dyn CompressionProvider>>,
+    ping: Arc<dyn PingProvider>,
+    encryption: Arc<dyn EncryptionProvider>,
+    compression: Arc<dyn CompressionProvider>,
 }
 
 impl Builder {
@@ -75,17 +74,17 @@ impl Builder {
     }
 
     pub fn set_ping<T: 'static + PingProvider>(mut self, ping: T) -> Self {
-        self.ping = Some(Arc::new(ping));
+        self.ping = Arc::new(ping);
         self
     }
 
     pub fn set_encryption<T: 'static + EncryptionProvider>(mut self, encryption: T) -> Self {
-        self.encryption = Some(Arc::new(encryption));
+        self.encryption = Arc::new(encryption);
         self
     }
 
     pub fn set_compression<T: 'static + CompressionProvider>(mut self, compression: T) -> Self {
-        self.compression = Some(Arc::new(compression));
+        self.compression = Arc::new(compression);
         self
     }
 
@@ -94,28 +93,26 @@ impl Builder {
             Some(conn) => conn,
             None => return Err(BuildError::ConnNotSet),
         };
-        let ping = match self.ping {
-            Some(ping) => ping,
-            None => NilPing::new(),
-        };
-        let encryption = match self.encryption {
-            Some(encryption) => encryption,
-            None => NilEncryption::new(),
-        };
-        let compression = match self.compression {
-            Some(compression) => compression,
-            None => NilCompression::new(),
-        };
-
         let context = Context::new(conn.clone(),
-                                   encryption.clone(),
-                                   compression,
+                                   self.encryption.clone(),
+                                   self.compression,
                                    ContextMode::Handle);
 
-        ping.init(context.clone(ContextMode::Handle)).await;
-        encryption.init(context.clone(ContextMode::Raw)).await?;
-
+        self.ping.init(context.clone(ContextMode::Raw)).await;
+        self.encryption.init(context.clone(ContextMode::Raw)).await?;
 
         Ok(context.get_kind_conn().await)
+    }
+}
+
+impl Default for Builder {
+    fn default() -> Self {
+        let empty_realisation = EmptyRealisation::new();
+        Builder {
+            conn: None,
+            ping: empty_realisation.clone(),
+            encryption: empty_realisation.clone(),
+            compression: empty_realisation.clone(),
+        }
     }
 }

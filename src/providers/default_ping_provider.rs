@@ -6,6 +6,7 @@ use tokio::time::timeout;
 use crate::builder::builder::PingProvider;
 use crate::builder::context::Context;
 use crate::builder::kind_conn::KindConn;
+use crate::builder::kind_conn::close_code::PING_TIMEOUT;
 
 pub struct DefaultPingProvider {
     long_duration: Duration,
@@ -68,7 +69,7 @@ async fn short_timeout(short_duration: Duration,
     match timeout(short_duration, conn.read()).await {
         Ok(res) => handle_read(res, conn).await,
         Err(_) => {
-            conn.close(5).await;
+            conn.close(PING_TIMEOUT).await;
             Err(())
         }
     }
