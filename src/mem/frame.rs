@@ -5,48 +5,70 @@ use bytes::{BufMut, BytesMut};
 use crate::mem::Chunk;
 use crate::sync::Kind;
 
-const LEN_BYTES: usize = 2;
-const KIND_BYTES: usize = 1;
+const HEADER_LEN_BYTES: usize = 2;
+const HEADER_KIND_BYTES: usize = 1;
+const HEADER_BYTES: usize = HEADER_LEN_BYTES + HEADER_KIND_BYTES;
 
-#[derive(Debug, Default)]
+/// Simple stream-based protocol communication unit
+///
+/// Implements [`Chunk`] and [`Kind`] trates
+///
+/// [`Chunk`]: crate::mem::Chunk
+/// [`Kind`]: crate::sync::kind
 pub struct Frame {
-    data: BytesMut,
+    inner: BytesMut,
 }
 
 impl Frame {
-    pub fn new<T: Deref<Target=[u8]>>(kind: u8, body: T) -> Self {
-        let size = Frame::header_len() + KIND_BYTES + body.len();
-        let mut data = BytesMut::with_capacity(size);
-        data.put_uint((body.len() + KIND_BYTES) as u64, LEN_BYTES);
-        data.put_uint(kind as u64, KIND_BYTES);
-        data.put_slice(&body);
-        Frame {
-            data
-        }
+    /// Creates new frame
+    ///
+    /// # Note
+    ///
+    /// This operation is O (n) due to copying
+    pub fn create(kind: u8, body: &[u8]) -> Self {
+        let total_len = HEADER_BYTES + body.len();
+
+        let mut frame = Frame { inner: BytesMut::with_capacity(total_len) };
+
+        frame.put_header(kind);
+        frame.put_body(body);
+
+        frame
     }
 
-    pub fn get_data(self) -> Vec<u8> {
+    fn put_header(&mut self, kind: u8) {
+        self.inner.put_uint((self.inner.capacity() - HEADER_LEN_BYTES) as u64, HEADER_LEN_BYTES);
+        self.inner.put_uint(kind as u64, HEADER_KIND_BYTES);
+    }
 
-        // TODO maybe excess move or copy
-        self.data[KIND_BYTES..].to_vec()
+    fn put_body(&mut self, body: &[u8]) {
+        self.inner.put_slice(body)
+    }
+
+    /// Returns body of frame
+    ///
+    /// # Note
+    ///
+    /// This operation is O (1) because only some of the internal
+    /// indexes are updated
+    pub fn get_body(mut self) -> BytesMut {
+        self.inner.split_off(HEADER_BYTES)
     }
 }
 
 impl Kind<u8> for Frame {
     fn kind(&self) -> u8 {
-        self.data[0]
+        self.inner[HEADER_LEN_BYTES]
     }
 }
 
 impl Chunk for Frame {
     fn header_len() -> usize {
-        LEN_BYTES
+        HEADER_LEN_BYTES
     }
 
     fn with_capacity(capacity: usize) -> Self {
-        Frame {
-            data: BytesMut::with_capacity(capacity),
-        }
+        Frame { inner: BytesMut::with_capacity(capacity) }
     }
 }
 
@@ -54,12 +76,12 @@ impl Deref for Frame {
     type Target = BytesMut;
 
     fn deref(&self) -> &Self::Target {
-        &self.data
+        &self.inner
     }
 }
 
 impl DerefMut for Frame {
     fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.data
+        &mut self.inner
     }
 }
