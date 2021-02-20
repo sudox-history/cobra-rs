@@ -11,10 +11,10 @@ use crate::transport::buffer::ConcatBuffer;
 use crate::transport::frame::Frame;
 
 pub struct Conn {
-    tcp_stream: Arc<TcpStream>,
     write_pool: Pool<Frame>,
     read_pool: KindPool<u8, Frame>,
     conn_close_notifier: Arc<Notify>,
+    readable_notifier: Arc<Notify>,
     local_addr: SocketAddr,
     peer_addr: SocketAddr,
 }
@@ -25,9 +25,8 @@ impl Conn {
         let local_addr = tcp_stream.local_addr()?;
         let peer_addr = tcp_stream.peer_addr()?;
 
-        let tcp_stream = Arc::new(tcp_stream);
-        let read_tcp_stream = tcp_stream.clone();
-        let write_tcp_stream = tcp_stream.clone();
+        let read_tcp_stream = Arc::new(tcp_stream);
+        let write_tcp_stream = read_tcp_stream.clone();
 
         let read_pool = KindPool::new();
         let write_pool = Pool::new();
@@ -35,6 +34,7 @@ impl Conn {
         let buffer = ConcatBuffer::default();
 
         let conn_close_notifier = Arc::new(Notify::new());
+        let readable_notifier = Arc::new(Notify::new());
 
         tokio::spawn(Conn::close_task(
             server_close_notifier,
@@ -47,6 +47,7 @@ impl Conn {
             read_tcp_stream,
             read_pool.clone(),
             buffer,
+            readable_notifier.clone(),
         ));
 
         tokio::spawn(Conn::write_loop(
@@ -55,10 +56,10 @@ impl Conn {
         ));
 
         Ok(Conn {
-            tcp_stream,
             write_pool,
             read_pool,
             conn_close_notifier,
+            readable_notifier,
             local_addr,
             peer_addr,
         })
@@ -89,11 +90,13 @@ impl Conn {
 
     async fn read_loop(read_tcp_stream: Arc<TcpStream>,
                        read_pool: KindPool<u8, Frame>,
-                       mut buffer: ConcatBuffer<Frame>) {
+                       mut buffer: ConcatBuffer<Frame>,
+                       readable_notifier: Arc<Notify>) {
         loop {
             if read_tcp_stream.readable().await.is_err() {
                 break;
             }
+            readable_notifier.notify_waiters();
             match read_tcp_stream.try_read_buf(buffer.deref_mut()) {
                 Ok(0) => break,
                 Ok(_) => {}
@@ -153,8 +156,8 @@ impl Conn {
         self.peer_addr
     }
 
-    pub async fn readable(&self) -> io::Result<()> {
-        self.tcp_stream.readable().await
+    pub async fn readable(&self) {
+        self.readable_notifier.notified().await;
     }
 
     pub fn close(&self) {

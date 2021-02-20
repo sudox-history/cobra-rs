@@ -1,12 +1,14 @@
+use std::sync::Arc;
 use std::time::Duration;
 
 use async_trait::async_trait;
+use tokio::sync::RwLock;
 use tokio::time::timeout;
 
 use crate::builder::builder::PingProvider;
 use crate::builder::context::Context;
-use crate::builder::kind_conn::KindConn;
 use crate::builder::kind_conn::close_code::PING_TIMEOUT;
+use crate::builder::kind_conn::KindConn;
 
 pub struct DefaultPingProvider {
     long_duration: Duration,
@@ -16,9 +18,15 @@ pub struct DefaultPingProvider {
 #[async_trait]
 impl PingProvider for DefaultPingProvider {
     async fn init(&self, context: Context) {
-        let conn = context.get_kind_conn().await;
-        tokio::spawn(ping_loop(self.long_duration,
-                               self.short_duration, conn));
+        let conn = Arc::new(context.get_kind_conn().await);
+        let alive = Arc::new(RwLock::new(true));
+
+        tokio::spawn(
+            DefaultPingProvider::read_loop(conn.clone(), alive.clone())
+        );
+        tokio::spawn(
+            DefaultPingProvider::ping_loop(self.long_duration, self.short_duration, conn, alive)
+        );
     }
 }
 
@@ -29,61 +37,42 @@ impl DefaultPingProvider {
             short_duration,
         }
     }
-}
 
-async fn ping_loop(long_duration: Duration, short_duration: Duration, conn: KindConn) {
-    loop {
-        tokio::select! {
-            res = ping(long_duration, short_duration, &conn) => {
-                if res.is_err() {
+    async fn ping_loop(long_duration: Duration,
+                       short_duration: Duration,
+                       conn: Arc<KindConn>,
+                       alive: Arc<RwLock<bool>>) {
+        loop {
+            // Если ошибка - то прошел таймаут и не было принято пакетов
+            if timeout(long_duration, conn.readable()).await.is_err() {
+                *alive.write().await = false;
+                if DefaultPingProvider::write_ping(&conn).await.is_err() {
                     break;
-                }
-            },
-            res = conn.readable() => {
-                if res.is_err() {
-                    break;
+                };
+
+                if timeout(short_duration, conn.readable()).await.is_err()
+                    && !(*alive.read().await) {
+                    conn.close(PING_TIMEOUT).await;
                 }
             }
         }
     }
-}
 
-async fn ping(long_duration: Duration, short_duration: Duration, conn: &KindConn) -> Result<(), ()> {
-    if long_timeout(long_duration, conn).await.is_ok() {
-        Ok(())
-    } else {
-        short_timeout(short_duration, conn).await
-    }
-}
-
-async fn long_timeout(long_duration: Duration, conn: &KindConn) -> Result<(), ()>
-{
-    match timeout(long_duration, conn.read()).await {
-        Ok(res) => handle_read(res, conn).await,
-        Err(_) => write_ping(conn).await,
-    }
-}
-
-async fn short_timeout(short_duration: Duration,
-                       conn: &KindConn) -> Result<(), ()> {
-    match timeout(short_duration, conn.read()).await {
-        Ok(res) => handle_read(res, conn).await,
-        Err(_) => {
-            conn.close(PING_TIMEOUT).await;
-            Err(())
+    async fn read_loop(conn: Arc<KindConn>, alive: Arc<RwLock<bool>>) {
+        while conn.read().await.is_some() {
+            if *alive.read().await {
+                if DefaultPingProvider::write_ping(&conn).await.is_err() {
+                    break;
+                }
+            } else {
+                *alive.write().await = false;
+            }
         }
     }
-}
 
-async fn handle_read(res: Option<Vec<u8>>, conn: &KindConn) -> Result<(), ()> {
-    match res {
-        Some(_) => write_ping(&conn).await,
-        None => Err(()),
+    async fn write_ping(conn: &KindConn) -> Result<(), ()> {
+        conn.write(vec![])
+            .await
+            .map_err(|_| ())
     }
-}
-
-async fn write_ping(conn: &KindConn) -> Result<(), ()> {
-    conn.write(vec![])
-        .await
-        .map_err(|_| ())
 }

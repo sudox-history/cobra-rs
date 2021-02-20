@@ -1,4 +1,3 @@
-use std::io;
 use std::net::SocketAddr;
 use std::sync::Arc;
 
@@ -20,7 +19,7 @@ pub trait ConnProvider: Send + Sync {
 
     fn peer_addr(&self) -> SocketAddr;
 
-    async fn readable(&self) -> io::Result<()>;
+    async fn readable(&self);
 
     async fn close(&self, code: u8);
 
@@ -51,6 +50,7 @@ pub trait CompressionProvider: Send + Sync {
     fn decompress(&self, frame: Vec<u8>) -> Vec<u8>;
 }
 
+#[derive(Debug)]
 pub enum BuildError {
     ConnNotSet,
     EncryptionInitFailed,

@@ -22,6 +22,13 @@ impl TcpConnProvider {
             error_code: RwLock::new(0),
         })
     }
+
+    pub async fn from_tpc_conn(conn: Conn) -> Self {
+        TcpConnProvider {
+            conn,
+            error_code: RwLock::new(0),
+        }
+    }
 }
 
 #[async_trait]
@@ -46,8 +53,8 @@ impl ConnProvider for TcpConnProvider {
         self.conn.peer_addr()
     }
 
-    async fn readable(&self) -> io::Result<()> {
-        self.conn.readable().await
+    async fn readable(&self) {
+        self.conn.readable().await;
     }
 
     async fn close(&self, code: u8) {
