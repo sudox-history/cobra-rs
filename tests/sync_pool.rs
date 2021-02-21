@@ -1,6 +1,7 @@
 use std::sync::Arc;
 
 use tokio::sync::Semaphore;
+use tokio::time;
 
 use cobra_rs::sync::{Pool, WriteError};
 
@@ -81,21 +82,19 @@ async fn multiple_read_multiple_write() {
     let semaphore_b = semaphore.clone();
 
     tokio::spawn(async move {
-        let val = read_pool_a.read().await.unwrap().accept();
-        semaphore_a.add_permits(val);
+        semaphore_a.add_permits(read_pool_a.read().await.unwrap().accept());
     });
 
     tokio::spawn(async move {
-        let val = read_pool_b.read().await.unwrap().accept();
-        semaphore_b.add_permits(val);
+        semaphore_b.add_permits(read_pool_b.read().await.unwrap().accept());
     });
 
     tokio::spawn(async move {
-        assert!(write_pool_a.write(1).await.is_ok());
+        write_pool_a.write(1).await.unwrap();
     });
 
     tokio::spawn(async move {
-        assert!(write_pool_b.write(2).await.is_ok());
+        write_pool_b.write(2).await.unwrap();
     });
 
     assert!(semaphore.acquire_many(3).await.is_ok());
@@ -108,10 +107,9 @@ async fn implicit_accept_test() {
     let write_pool = read_pool.clone();
 
     tokio::spawn(async move {
-        let value = read_pool.read()
+        read_pool.read()
             .await
             .unwrap();
-        assert_eq!(*value, 1);
     });
 
     assert!(write_pool.write(1).await.is_ok());
@@ -126,26 +124,91 @@ async fn reject_test() {
         read_pool.read().await.unwrap().reject().await;
     });
 
-    let result = write_pool.write(1).await;
-    assert!(result.is_err());
-
-    match result.unwrap_err() {
+    match write_pool.write(1).await.unwrap_err() {
         WriteError::Rejected(value) => assert_eq!(value, 1),
         _ => panic!("wrong write error returned"),
     }
 }
 
 #[tokio::test]
-async fn close_test() {
+async fn read_after_close_test() {
+    let read_pool: Pool<i32> = Pool::new();
+    read_pool.close().await;
+
+    assert!(read_pool.read().await.is_none());
+}
+
+#[tokio::test]
+async fn read_before_close_test() {
     let read_pool: Pool<i32> = Pool::new();
     let write_pool: Pool<i32> = read_pool.clone();
 
     tokio::spawn(async move {
-        assert!(write_pool.write(1).await.is_err());
+        time::sleep(time::Duration::from_millis(100)).await;
+        write_pool.close().await;
     });
 
-    read_pool.close();
     assert!(read_pool.read().await.is_none());
+}
+
+#[tokio::test]
+async fn write_after_close_test() {
+    let write_pool: Pool<i32> = Pool::new();
+    write_pool.close().await;
+
+    match write_pool.write(1).await.unwrap_err() {
+        WriteError::Closed(value) => assert_eq!(value, 1),
+        _ => panic!("wrong write error returned")
+    };
+}
+
+#[tokio::test]
+async fn write_before_close_test() {
+    let read_pool: Pool<i32> = Pool::new();
+    let write_pool: Pool<i32> = read_pool.clone();
+
+    tokio::spawn(async move {
+        time::sleep(time::Duration::from_millis(100)).await;
+        read_pool.close().await;
+    });
+
+    match write_pool.write(1).await.unwrap_err() {
+        WriteError::Closed(value) => assert_eq!(value, 1),
+        _ => panic!("wrong write error returned")
+    }
+}
+
+#[tokio::test]
+async fn accept_after_close_test() {
+    let read_pool: Pool<i32> = Pool::new();
+    let write_pool: Pool<i32> = read_pool.clone();
+
+    tokio::spawn(async move {
+        let value = read_pool.read().await.unwrap();
+        read_pool.close().await;
+
+        value.accept();
+    });
+
+    assert!(write_pool.write(1).await.is_ok());
+}
+
+#[tokio::test]
+async fn reject_after_close_test() {
+    let read_pool: Pool<i32> = Pool::new();
+    let write_pool: Pool<i32> = read_pool.clone();
+
+    tokio::spawn(async move {
+        let value = read_pool.read().await.unwrap();
+        read_pool.close().await;
+
+        value.reject().await;
+    });
+
+    match write_pool.write(1).await.unwrap_err() {
+        WriteError::Rejected(value) => assert_eq!(value, 1),
+        _ => panic!("wrong write error returned")
+    }
 }
 
 #[tokio::test]
@@ -154,12 +217,12 @@ async fn stress_test() {
     let write_pool: Pool<i32> = read_pool.clone();
 
     tokio::spawn(async move {
-        for i in 0..100000 {
-            assert!(write_pool.write(i).await.is_ok());
+        for i in 0..30000 {
+            write_pool.write(i).await.unwrap();
         }
     });
 
-    for i in 0..100000 {
+    for i in 0..30000 {
         assert_eq!(read_pool.read().await.unwrap().accept(), i);
     }
 }

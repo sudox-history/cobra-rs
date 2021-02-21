@@ -104,7 +104,9 @@ impl<K: Eq + Hash, V: Kind<K>> KindPool<K, V> {
         if self.state.is_closed().await {
             Err(WriteError::Closed(value))
         } else {
-            self.state.get_pool(value.kind()).await.write(value).await
+            self.state.get_pool(value.kind()).await
+                .write(value)
+                .await
         }
     }
 
@@ -124,7 +126,9 @@ impl<K: Eq + Hash, V: Kind<K>> KindPool<K, V> {
         if self.state.is_closed().await {
             None
         } else {
-            self.state.get_pool(kind).await.read().await
+            self.state.get_pool(kind).await
+                .read()
+                .await
         }
     }
 
@@ -144,14 +148,15 @@ impl<K: Eq + Hash, V: Kind<K>> KindPoolState<K, V> {
 
     async fn get_pool(&self, kind: K) -> Pool<V> {
         self.pools.write().await
-            .entry(kind).or_insert_with(Pool::new)
+            .entry(kind)
+            .or_insert_with(Pool::new)
             .clone()
     }
 
     async fn close(&self) {
         *self.closed.write().await = true;
         for (_, pool) in self.pools.read().await.iter() {
-            pool.close();
+            pool.close().await;
         }
     }
 
