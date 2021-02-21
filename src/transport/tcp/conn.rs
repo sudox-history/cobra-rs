@@ -4,13 +4,14 @@ use std::ops::DerefMut;
 use std::sync::Arc;
 use std::time::Duration;
 
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpStream, ToSocketAddrs};
 use tokio::sync::Notify;
 use tokio::time;
+use async_trait::async_trait;
 
 use crate::mem::{ConcatBuf, Frame};
 use crate::sync::{KindPool, Pool, WriteError};
+use crate::builder::builder::ConnProvider;
 
 pub struct Conn {
     inner: Arc<TcpStream>,
@@ -22,6 +23,7 @@ pub struct Conn {
 
 struct ConnReader {
     pool: KindPool<u8, Frame>,
+    readable_notifier: Arc<Notify>,
 }
 
 struct ConnWriter {
@@ -54,51 +56,6 @@ impl Conn {
         )
     }
 
-    /// Returns local address that connection bound to
-    pub fn local_addr(&self) -> io::Result<SocketAddr> {
-        self.inner.local_addr()
-    }
-
-    /// Returns remote address that connection connected to
-    pub fn peer_addr(&self) -> io::Result<SocketAddr> {
-        self.inner.peer_addr()
-    }
-
-    /// Reads a frame from a connection
-    ///
-    /// Returns [`Frame`] on a successful read and [`None`] if
-    /// connection was closed
-    ///
-    /// # Note
-    ///
-    /// This function is thread-safe and can be called from
-    /// multiple tasks
-    ///
-    /// [`Frame`]: crate::mem::Frame
-    /// [`None`]: std::option::Option::None
-    pub async fn read(&self, kind: u8) -> Option<Frame> {
-        self.reader.read(kind).await
-    }
-
-    /// Writes a frame to the connection
-    ///
-    /// Returns [`WriteError::Rejected`] if the packet wasn't written correctly
-    /// (occurs only if a write attempt was made when the connection was closing)
-    /// and [`WriteError::Closed`] if the connection was already closed
-    ///
-    /// # Note
-    ///
-    /// This function is thread-safe and can be called from
-    /// multiple tasks
-    ///
-    /// [`WriteError::Rejected`]: crate::sync::WriteError::Rejected
-    /// [`WriteError::Closed`]: crate::sync::WriteError::Closed
-    pub async fn write(&self, frame: Frame) -> Result<(), WriteError<Frame>> {
-        self.writer.write(frame).await
-    }
-
-    pub async fn close(self) {}
-
     pub(crate) fn from_raw(tcp_stream: TcpStream) -> Self {
         let inner = Arc::new(tcp_stream);
 
@@ -114,6 +71,7 @@ impl ConnReader {
     fn create(inner: Arc<TcpStream>) -> Self {
         let worker = ConnReader {
             pool: KindPool::new(),
+            readable_notifier: Arc::new(Notify::new()),
         };
 
         worker.spawn(inner);
@@ -122,6 +80,7 @@ impl ConnReader {
 
     fn spawn(&self, inner: Arc<TcpStream>) {
         let pool = self.pool.clone();
+        let readable_notifier = self.readable_notifier.clone();
 
         tokio::spawn(async move {
             let mut buf = ConcatBuf::default();
@@ -130,6 +89,7 @@ impl ConnReader {
                 if inner.readable().await.is_err() {
                     break;
                 }
+                readable_notifier.notify_waiters();
 
                 match inner.try_read_buf(buf.deref_mut()) {
                     // On EOF closing read worker
@@ -158,6 +118,11 @@ impl ConnReader {
 
     async fn read(&self, kind: u8) -> Option<Frame> {
         Some(self.pool.read(kind).await?.accept())
+    }
+
+    async fn readable(&self) {
+        // TODO do something when implement close
+        self.readable_notifier.notified().await;
     }
 
     async fn close(&self) {
@@ -211,14 +176,68 @@ impl ConnWriter {
     async fn write(&self, frame: Frame) -> Result<(), WriteError<Frame>> {
         self.pool.write(frame).await
     }
-
-    async fn close(&self) {
-        self.pool.close().await
-    }
 }
 
 impl Drop for Conn {
     fn drop(&mut self) {
         // Close connection
+    }
+}
+
+#[async_trait]
+impl ConnProvider for Conn {
+    /// Reads a frame from a connection
+    ///
+    /// Returns [`Frame`] on a successful read and [`None`] if
+    /// connection was closed
+    ///
+    /// # Note
+    ///
+    /// This function is thread-safe and can be called from
+    /// multiple tasks
+    ///
+    /// [`Frame`]: crate::mem::Frame
+    /// [`None`]: std::option::Option::None
+    async fn read(&self, kind: u8) -> Option<Frame> {
+        self.reader.read(kind).await
+    }
+
+    /// Writes a frame to the connection
+    ///
+    /// Returns [`WriteError::Rejected`] if the packet wasn't written correctly
+    /// (occurs only if a write attempt was made when the connection was closing)
+    /// and [`WriteError::Closed`] if the connection was already closed
+    ///
+    /// # Note
+    ///
+    /// This function is thread-safe and can be called from
+    /// multiple tasks
+    ///
+    /// [`WriteError::Rejected`]: crate::sync::WriteError::Rejected
+    /// [`WriteError::Closed`]: crate::sync::WriteError::Closed
+    async fn write(&self, frame: Frame) -> Result<(), WriteError<Frame>> {
+        self.writer.write(frame).await
+    }
+
+    /// Returns local address that connection bound to
+    fn local_addr(&self) -> io::Result<SocketAddr> {
+        self.inner.local_addr()
+    }
+
+    /// Returns remote address that connection connected to
+    fn peer_addr(&self) -> io::Result<SocketAddr> {
+        self.inner.peer_addr()
+    }
+
+    async fn readable(&self) {
+        self.reader.readable().await;
+    }
+
+    async fn close(&self, _code: u8) {
+        todo!()
+    }
+
+    async fn is_close(&self) -> Option<u8> {
+        todo!()
     }
 }

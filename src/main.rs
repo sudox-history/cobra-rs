@@ -1,5 +1,4 @@
-use cobra_rs::sync::{KindPool, Kind, Pool, WriteError};
-use std::fs::read;
+use cobra_rs::sync::{KindPool, Kind};
 
 #[derive(Debug)]
 struct Value {
@@ -20,14 +19,38 @@ impl Kind<u8> for Value {
 
 #[tokio::main]
 async fn main() {
-    let read_pool: Pool<i32> = Pool::new();
-    let write_pool: Pool<i32> = read_pool.clone();
+    let pool = KindPool::new();
+    let pool2: KindPool<u8, Value> = pool.clone();
+    let pool3: KindPool<u8, Value> = pool.clone();
+
+    const KIND_1: u8 = 1;
+    const KIND_2: u8 = 2;
 
     tokio::spawn(async move {
-        write_pool.close().await;
+        loop {
+            match pool2.read(KIND_1).await {
+                Some(value) => {
+                    println!("Received value with KIND_1: {:?}", *value);
+                    value.accept();
+                }
+                None => break println!("Pool closed"),
+            }
+        }
     });
 
-    assert!(read_pool.read().await.is_none());
+    tokio::spawn(async move {
+        loop {
+            match pool3.read(KIND_2).await {
+                Some(value) => {
+                    println!("Received value with KIND_2: {:?}", *value);
+                    value.accept();
+                }
+                None => break println!("Pool closed"),
+            }
+        }
+    });
+
+    pool.write(Value::new(KIND_1)).await.unwrap();
+    pool.write(Value::new(KIND_2)).await.unwrap();
+    pool.close().await;
 }
-
-
