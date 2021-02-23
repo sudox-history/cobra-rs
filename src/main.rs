@@ -1,56 +1,66 @@
-use cobra_rs::sync::{KindPool, Kind};
+use std::time::Duration;
 
-#[derive(Debug)]
-struct Value {
-    kind: u8,
-}
-
-impl Value {
-    fn new(kind: u8) -> Self {
-        Value { kind }
-    }
-}
-
-impl Kind<u8> for Value {
-    fn kind(&self) -> u8 {
-        self.kind
-    }
-}
+use cobra_rs::builder::builder::Builder;
+use cobra_rs::providers::default_ping_provider::DefaultPingProvider;
+use cobra_rs::transport::tcp::{Conn, Listener};
 
 #[tokio::main]
 async fn main() {
-    let pool = KindPool::new();
-    let pool2: KindPool<u8, Value> = pool.clone();
-    let pool3: KindPool<u8, Value> = pool.clone();
+    tokio::join!(
+        server(),
+        client()
+    );
+}
 
-    const KIND_1: u8 = 1;
-    const KIND_2: u8 = 2;
+async fn server() {
+    let listener = Listener::listen("127.0.0.1:5000").await.unwrap();
+    let conn = listener.accept().await.unwrap();
+    let ping_provider = DefaultPingProvider::new(
+        Duration::from_secs(6), Duration::from_secs(2));
 
-    tokio::spawn(async move {
-        loop {
-            match pool2.read(KIND_1).await {
-                Some(value) => {
-                    println!("Received value with KIND_1: {:?}", *value);
-                    value.accept();
-                }
-                None => break println!("Pool closed"),
-            }
-        }
-    });
+    let conn = Builder::new()
+        .set_conn(conn)
+        .set_ping(ping_provider)
+        .run()
+        .await
+        .unwrap();
+    println!("Server side built");
 
-    tokio::spawn(async move {
-        loop {
-            match pool3.read(KIND_2).await {
-                Some(value) => {
-                    println!("Received value with KIND_2: {:?}", *value);
-                    value.accept();
-                }
-                None => break println!("Pool closed"),
-            }
-        }
-    });
+    let frame = conn.read()
+        .await
+        .unwrap();
+    assert_eq!(frame, vec![1, 2, 3]);
 
-    pool.write(Value::new(KIND_1)).await.unwrap();
-    pool.write(Value::new(KIND_2)).await.unwrap();
-    pool.close().await;
+    let frame = vec![3, 2, 1];
+    assert!(conn.write(frame)
+        .await
+        .is_ok());
+
+    println!("Server side end");
+}
+
+async fn client() {
+    let conn_provider = Conn::connect("127.0.0.1:5000").await.unwrap();
+    let ping_provider = DefaultPingProvider::new(
+        Duration::from_secs(6), Duration::from_secs(2));
+
+    let conn = Builder::new()
+        .set_conn(conn_provider)
+        .set_ping(ping_provider)
+        .run()
+        .await
+        .unwrap();
+    println!("Client side built");
+
+    let frame = vec![1, 2, 3];
+    assert!(conn.write(frame)
+        .await
+        .is_ok());
+
+    let frame = conn.read()
+        .await
+        .unwrap();
+    assert_eq!(frame, vec![3, 2, 1]);
+
+    println!("Client side end");
 }
