@@ -190,11 +190,11 @@ impl<T> PoolState<T> {
         self.read_semaphore.close();
         self.write_semaphore.close();
 
-        if !self.is_taken().await {
-            self.response_semaphore.close();
+        if self.is_taken().await {
+            self.close_notifier.notified().await;
         }
         else {
-            self.close_notifier.notified().await;
+            self.response_semaphore.close();
         }
     }
 }
