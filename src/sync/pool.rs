@@ -1,7 +1,7 @@
-use std::ops::{Deref, DerefMut};
+use std::ops::Deref;
 use std::sync::Arc;
 
-use tokio::sync::{RwLock, Semaphore};
+use tokio::sync::{Notify, RwLock, Semaphore};
 
 /// Error returned on [`write`] failure
 ///
@@ -65,11 +65,8 @@ struct PoolState<T> {
     read_semaphore: Semaphore,
     write_semaphore: Semaphore,
     response_semaphore: Semaphore,
-    store: PoolStore<T>,
-}
-
-struct PoolStore<T> {
-    inner: RwLock<(Option<T>, bool)>
+    store: RwLock<(Option<T>, bool)>,
+    close_notifier: Notify,
 }
 
 /// Value returned by [`read`] method
@@ -118,7 +115,6 @@ impl<T> Pool<T> {
             .map_or(Ok(()), |value| Err(WriteError::Rejected(value)))
     }
 
-
     /// Closes the pool
     pub async fn close(&self) {
         self.state.close().await
@@ -131,7 +127,8 @@ impl<T> PoolState<T> {
             read_semaphore: Semaphore::new(0),
             write_semaphore: Semaphore::new(1),
             response_semaphore: Semaphore::new(0),
-            store: PoolStore::new(),
+            store: RwLock::new((None, false)),
+            close_notifier: Notify::new(),
         }
     }
 
@@ -141,7 +138,7 @@ impl<T> PoolState<T> {
             .forget();
 
         // Always Some()
-        Ok(self.store.take().await.unwrap())
+        Ok(self.take().await.unwrap())
     }
 
     async fn write_value(&self, value: T) -> Result<(), T> {
@@ -149,7 +146,7 @@ impl<T> PoolState<T> {
             Ok(permit) => {
                 permit.forget();
 
-                self.store.share(value).await;
+                self.share(value).await;
                 self.read_semaphore.add_permits(1);
 
                 Ok(())
@@ -164,46 +161,41 @@ impl<T> PoolState<T> {
             Ok(permit) => {
                 permit.forget();
 
-                let value = self.store.take().await;
+                let value = self.take().await;
                 self.write_semaphore.add_permits(1);
 
                 Ok(value)
             }
 
-            Err(_) => Err(self.store.take().await.unwrap())
+            Err(_) => Err(self.take().await.unwrap())
         }
+    }
+
+    async fn share(&self, value: T) {
+        self.store.write().await.0 = Some(value);
+    }
+
+    async fn take(&self) -> Option<T> {
+        let mut store = self.store.write().await;
+
+        store.1 = !store.1;
+        store.0.take()
+    }
+
+    async fn is_taken(&self) -> bool {
+        self.store.read().await.1
     }
 
     async fn close(&self) {
         self.read_semaphore.close();
         self.write_semaphore.close();
 
-        if !self.store.is_taken().await {
+        if !self.is_taken().await {
             self.response_semaphore.close();
         }
-    }
-}
-
-impl<T> PoolStore<T> {
-    fn new() -> Self {
-        PoolStore {
-            inner: RwLock::new((None, false)),
+        else {
+            self.close_notifier.notified().await;
         }
-    }
-
-    async fn share(&self, value: T) {
-        self.inner.write().await.0 = Some(value);
-    }
-
-    async fn take(&self) -> Option<T> {
-        let mut inner = self.inner.write().await;
-
-        inner.1 = !inner.1;
-        inner.0.take()
-    }
-
-    async fn is_taken(&self) -> bool {
-        self.inner.read().await.1
     }
 }
 
@@ -226,6 +218,7 @@ impl<T> PoolGuard<T> {
     /// [`Ok`]: std::result::Result::Ok
     /// [`PoolGuard`]: crate::transport::pool::PoolGuard
     pub fn accept(mut self) -> T {
+        self.state.close_notifier.notify_waiters();
         self.state.response_semaphore.add_permits(1);
 
         // Always Some()
@@ -238,10 +231,11 @@ impl<T> PoolGuard<T> {
     ///
     /// [`WriteError::Rejected`]: crate::transport::sync::WriteError
     pub async fn reject(mut self) {
-        self.state.store
+        self.state
             .share(self.value.take().unwrap())
             .await;
 
+        self.state.close_notifier.notify_waiters();
         self.state.response_semaphore.add_permits(1);
     }
 }
@@ -267,12 +261,6 @@ impl<T> Deref for PoolGuard<T> {
 
     fn deref(&self) -> &Self::Target {
         self.value.as_ref().unwrap()
-    }
-}
-
-impl<T> DerefMut for PoolGuard<T> {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        self.value.as_mut().unwrap()
     }
 }
 

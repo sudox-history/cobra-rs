@@ -185,7 +185,11 @@ async fn accept_after_close_test() {
 
     tokio::spawn(async move {
         let value = read_pool.read().await.unwrap();
-        read_pool.close().await;
+
+        let close_pool: Pool<i32> = read_pool.clone();
+        tokio::spawn(async move {
+            close_pool.close().await;
+        });
 
         value.accept();
     });
@@ -200,7 +204,11 @@ async fn reject_after_close_test() {
 
     tokio::spawn(async move {
         let value = read_pool.read().await.unwrap();
-        read_pool.close().await;
+
+        let close_pool: Pool<i32> = read_pool.clone();
+        tokio::spawn(async move {
+            close_pool.close().await;
+        });
 
         value.reject().await;
     });
