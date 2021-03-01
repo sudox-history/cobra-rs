@@ -65,8 +65,8 @@ struct PoolState<T> {
     read_semaphore: Semaphore,
     write_semaphore: Semaphore,
     response_semaphore: Semaphore,
-    store: RwLock<(Option<T>, bool)>,
     close_notifier: Notify,
+    store: RwLock<(Option<T>, bool)>,
 }
 
 /// Value returned by [`read`] method
@@ -127,8 +127,8 @@ impl<T> PoolState<T> {
             read_semaphore: Semaphore::new(0),
             write_semaphore: Semaphore::new(1),
             response_semaphore: Semaphore::new(0),
-            store: RwLock::new((None, false)),
             close_notifier: Notify::new(),
+            store: RwLock::new((None, false)),
         }
     }
 
@@ -164,6 +164,9 @@ impl<T> PoolState<T> {
                 let value = self.take().await;
                 self.write_semaphore.add_permits(1);
 
+                // For the correct close() method working
+                self.close_notifier.notify_waiters();
+
                 Ok(value)
             }
 
@@ -192,8 +195,7 @@ impl<T> PoolState<T> {
 
         if self.is_taken().await {
             self.close_notifier.notified().await;
-        }
-        else {
+        } else {
             self.response_semaphore.close();
         }
     }
@@ -218,7 +220,6 @@ impl<T> PoolGuard<T> {
     /// [`Ok`]: std::result::Result::Ok
     /// [`PoolGuard`]: crate::transport::pool::PoolGuard
     pub fn accept(mut self) -> T {
-        self.state.close_notifier.notify_waiters();
         self.state.response_semaphore.add_permits(1);
 
         // Always Some()
@@ -235,7 +236,6 @@ impl<T> PoolGuard<T> {
             .share(self.value.take().unwrap())
             .await;
 
-        self.state.close_notifier.notify_waiters();
         self.state.response_semaphore.add_permits(1);
     }
 }

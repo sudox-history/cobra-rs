@@ -1,6 +1,7 @@
+use std::ops::Sub;
 use std::sync::Arc;
 
-use tokio::sync::Semaphore;
+use tokio::sync::{RwLock, Semaphore};
 use tokio::time;
 
 use cobra_rs::sync::{Pool, WriteError};
@@ -183,18 +184,36 @@ async fn accept_after_close_test() {
     let read_pool: Pool<i32> = Pool::new();
     let write_pool: Pool<i32> = read_pool.clone();
 
+    let semaphore_a = Arc::new(Semaphore::new(0));
+    let semaphore_b = semaphore_a.clone();
+
+    let result_a = Arc::new(RwLock::new(time::Duration::from_millis(0)));
+    let result_b = result_a.clone();
+
     tokio::spawn(async move {
         let value = read_pool.read().await.unwrap();
 
         let close_pool: Pool<i32> = read_pool.clone();
         tokio::spawn(async move {
+            let timestamp = time::Instant::now();
             close_pool.close().await;
+            *result_b.write().await = time::Instant::now().sub(timestamp);
+
+            semaphore_b.add_permits(1);
         });
 
-        value.accept();
+        tokio::spawn(async move {
+            time::sleep(time::Duration::from_millis(100)).await;
+            value.accept();
+        });
     });
 
     assert!(write_pool.write(1).await.is_ok());
+
+    semaphore_a.acquire().await.unwrap().forget();
+    if result_a.read().await.le(&time::Duration::from_millis(80)) {
+        panic!("close method didn't block")
+    }
 }
 
 #[tokio::test]
@@ -202,20 +221,38 @@ async fn reject_after_close_test() {
     let read_pool: Pool<i32> = Pool::new();
     let write_pool: Pool<i32> = read_pool.clone();
 
+    let semaphore_a = Arc::new(Semaphore::new(0));
+    let semaphore_b = semaphore_a.clone();
+
+    let result_a = Arc::new(RwLock::new(time::Duration::from_millis(0)));
+    let result_b = result_a.clone();
+
     tokio::spawn(async move {
         let value = read_pool.read().await.unwrap();
 
         let close_pool: Pool<i32> = read_pool.clone();
         tokio::spawn(async move {
+            let timestamp = time::Instant::now();
             close_pool.close().await;
+            *result_b.write().await = time::Instant::now().sub(timestamp);
+
+            semaphore_b.add_permits(1);
         });
 
-        value.reject().await;
+        tokio::spawn(async move {
+            time::sleep(time::Duration::from_millis(100)).await;
+            value.reject().await;
+        });
     });
 
     match write_pool.write(1).await.unwrap_err() {
         WriteError::Rejected(value) => assert_eq!(value, 1),
         _ => panic!("wrong write error returned")
+    }
+
+    semaphore_a.acquire().await.unwrap().forget();
+    if result_a.read().await.le(&time::Duration::from_millis(80)) {
+        panic!("close method didn't block")
     }
 }
 
