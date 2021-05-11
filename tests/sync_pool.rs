@@ -134,7 +134,7 @@ async fn reject_test() {
 #[tokio::test]
 async fn read_after_close_test() {
     let read_pool: Pool<i32> = Pool::new();
-    read_pool.close().await;
+    read_pool.close();
 
     assert!(read_pool.read().await.is_none());
 }
@@ -146,7 +146,7 @@ async fn read_before_close_test() {
 
     tokio::spawn(async move {
         time::sleep(time::Duration::from_millis(100)).await;
-        write_pool.close().await;
+        write_pool.close();
     });
 
     assert!(read_pool.read().await.is_none());
@@ -155,7 +155,7 @@ async fn read_before_close_test() {
 #[tokio::test]
 async fn write_after_close_test() {
     let write_pool: Pool<i32> = Pool::new();
-    write_pool.close().await;
+    write_pool.close();
 
     match write_pool.write(1).await.unwrap_err() {
         WriteError::Closed(value) => assert_eq!(value, 1),
@@ -170,7 +170,7 @@ async fn write_before_close_test() {
 
     tokio::spawn(async move {
         time::sleep(time::Duration::from_millis(100)).await;
-        read_pool.close().await;
+        read_pool.close();
     });
 
     match write_pool.write(1).await.unwrap_err() {
@@ -196,7 +196,7 @@ async fn accept_after_close_test() {
         let close_pool: Pool<i32> = read_pool.clone();
         tokio::spawn(async move {
             let timestamp = time::Instant::now();
-            close_pool.close().await;
+            close_pool.close();
             *result_b.write().await = time::Instant::now().sub(timestamp);
 
             semaphore_b.add_permits(1);
@@ -233,7 +233,7 @@ async fn reject_after_close_test() {
         let close_pool: Pool<i32> = read_pool.clone();
         tokio::spawn(async move {
             let timestamp = time::Instant::now();
-            close_pool.close().await;
+            close_pool.close();
             *result_b.write().await = time::Instant::now().sub(timestamp);
 
             semaphore_b.add_permits(1);

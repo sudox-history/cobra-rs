@@ -156,7 +156,7 @@ impl<K: Eq + Hash, V: Kind<K>> KindPoolState<K, V> {
     async fn close(&self) {
         *self.closed.write().await = true;
         for (_, pool) in self.pools.read().await.iter() {
-            pool.close().await;
+            pool.close();
         }
     }
 

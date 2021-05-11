@@ -169,7 +169,7 @@ impl ConnWriter {
                 }
             }
 
-            pool.close().await;
+            pool.close();
         });
     }
 

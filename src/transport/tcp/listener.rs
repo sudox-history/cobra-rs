@@ -33,13 +33,19 @@ impl Listener {
     async fn accept_loop(tcp_listener: Arc<TcpListener>,
                          connections_pool: Pool<Conn>,
                          close_notifier: Arc<Notify>) {
-        while let Ok((socket, _)) = tcp_listener.accept().await {
-            let conn = Conn::from_raw(socket);
-            if connections_pool.write(conn).await.is_err() {
-                break;
+        let run = async move {
+            while let Ok((socket, _)) = tcp_listener.accept().await {
+                let conn = Conn::from_raw(socket);
+                if connections_pool.write(conn).await.is_err() {
+                    break;
+                }
             }
-        }
-        connections_pool.close().await;
+            connections_pool.close();
+        };
+        tokio::select! {
+            _ = run => {}
+            _ = close_notifier.notified() => {}
+        };
     }
 
     pub async fn accept(&self) -> Option<Conn> {
@@ -50,6 +56,6 @@ impl Listener {
     }
 
     pub async fn close_all_connections(&self) {
-        self.close_notifier.notify_waiters();
+        self.close_notifier.notify_one();
     }
 }

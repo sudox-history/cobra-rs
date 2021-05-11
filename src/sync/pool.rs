@@ -58,15 +58,15 @@ impl<T> WriteError<T> {
 /// }
 /// ```
 pub struct Pool<T> {
-    state: Arc<PoolState<T>>
+    state: Arc<PoolState<T>>,
 }
 
 struct PoolState<T> {
     read_semaphore: Semaphore,
     write_semaphore: Semaphore,
-    response_semaphore: Semaphore,
+    response_notifier: Notify,
     close_notifier: Notify,
-    store: RwLock<(Option<T>, bool)>,
+    store: RwLock<Option<T>>,
 }
 
 /// Value returned by [`read`] method
@@ -91,12 +91,10 @@ impl<T> Pool<T> {
     /// [`None`]: std::option::Option::None
     /// [`PoolGuard`]: crate::transport::pool::PoolGuard
     pub async fn read(&self) -> Option<PoolGuard<T>> {
-        Some(
-            PoolGuard::new(
-                self.state.read_value().await.ok()?,
-                self.state.clone(),
-            )
-        )
+        Some(PoolGuard::new(
+            self.state.read_value().await.ok()?,
+            self.state.clone(),
+        ))
     }
 
     /// Writes value to the pool
@@ -107,17 +105,21 @@ impl<T> Pool<T> {
     ///
     /// [`WriteError`]: crate::transport::pool::WriteError
     pub async fn write(&self, value: T) -> Result<(), WriteError<T>> {
-        self.state.write_value(value).await
+        self.state
+            .write_value(value)
+            .await
             .map_err(WriteError::Closed)?;
 
-        self.state.wait_response().await
+        self.state
+            .wait_response()
+            .await
             .map_err(WriteError::Closed)?
             .map_or(Ok(()), |value| Err(WriteError::Rejected(value)))
     }
 
     /// Closes the pool
-    pub async fn close(&self) {
-        self.state.close().await
+    pub fn close(&self) {
+        self.state.close();
     }
 }
 
@@ -126,16 +128,14 @@ impl<T> PoolState<T> {
         PoolState {
             read_semaphore: Semaphore::new(0),
             write_semaphore: Semaphore::new(1),
-            response_semaphore: Semaphore::new(0),
+            response_notifier: Notify::new(),
             close_notifier: Notify::new(),
-            store: RwLock::new((None, false)),
+            store: RwLock::new(None),
         }
     }
 
     async fn read_value(&self) -> Result<T, ()> {
-        self.read_semaphore.acquire().await
-            .or(Err(()))?
-            .forget();
+        self.read_semaphore.acquire().await.or(Err(()))?.forget();
 
         // Always Some()
         Ok(self.take().await.unwrap())
@@ -152,52 +152,41 @@ impl<T> PoolState<T> {
                 Ok(())
             }
 
-            Err(_) => Err(value)
+            Err(_) => Err(value),
         }
     }
 
     async fn wait_response(&self) -> Result<Option<T>, T> {
-        match self.response_semaphore.acquire().await {
-            Ok(permit) => {
-                permit.forget();
+        let closed = tokio::select! {
+            _ = self.response_notifier.notified() => { false }
+            _ = self.close_notifier.notified() => { true }
+        };
 
-                let value = self.take().await;
-                self.write_semaphore.add_permits(1);
-
-                // For the correct close() method working
-                self.close_notifier.notify_waiters();
-
-                Ok(value)
-            }
-
-            Err(_) => Err(self.take().await.unwrap())
+        if closed {
+            Err(self.take().await.unwrap())
+        } else {
+            let value = self.take().await;
+            self.write_semaphore.add_permits(1);
+            Ok(value)
         }
     }
 
     async fn share(&self, value: T) {
-        self.store.write().await.0 = Some(value);
+        *self.store.write().await = Some(value);
     }
 
     async fn take(&self) -> Option<T> {
         let mut store = self.store.write().await;
-
-        store.1 = !store.1;
-        store.0.take()
+        store.take()
     }
 
-    async fn is_taken(&self) -> bool {
-        self.store.read().await.1
-    }
-
-    async fn close(&self) {
+    fn close(&self) {
+        if let Ok(permit) =  self.read_semaphore.try_acquire() {
+            permit.forget();
+            self.close_notifier.notify_one();
+        }
         self.read_semaphore.close();
         self.write_semaphore.close();
-
-        if self.is_taken().await {
-            self.close_notifier.notified().await;
-        } else {
-            self.response_semaphore.close();
-        }
     }
 }
 
@@ -220,7 +209,7 @@ impl<T> PoolGuard<T> {
     /// [`Ok`]: std::result::Result::Ok
     /// [`PoolGuard`]: crate::transport::pool::PoolGuard
     pub fn accept(mut self) -> T {
-        self.state.response_semaphore.add_permits(1);
+        self.state.response_notifier.notify_one();
 
         // Always Some()
         self.value.take().unwrap()
@@ -232,18 +221,16 @@ impl<T> PoolGuard<T> {
     ///
     /// [`WriteError::Rejected`]: crate::transport::sync::WriteError
     pub async fn reject(mut self) {
-        self.state
-            .share(self.value.take().unwrap())
-            .await;
+        self.state.share(self.value.take().unwrap()).await;
 
-        self.state.response_semaphore.add_permits(1);
+        self.state.response_notifier.notify_one();
     }
 }
 
 impl<T> Default for Pool<T> {
     fn default() -> Self {
         Pool {
-            state: Arc::new(PoolState::new())
+            state: Arc::new(PoolState::new()),
         }
     }
 }
@@ -251,7 +238,7 @@ impl<T> Default for Pool<T> {
 impl<T> Clone for Pool<T> {
     fn clone(&self) -> Self {
         Pool {
-            state: self.state.clone()
+            state: self.state.clone(),
         }
     }
 }
@@ -267,7 +254,7 @@ impl<T> Deref for PoolGuard<T> {
 impl<T> Drop for PoolGuard<T> {
     fn drop(&mut self) {
         if self.value.take().is_some() {
-            self.state.response_semaphore.add_permits(1);
+            self.state.response_notifier.notify_one();
         }
     }
 }
